@@ -112,48 +112,50 @@ OMO-SpecFlow 是一套**规格驱动开发**（Spec-Driven Development）工作�
 
 ---
 
-### 全局安装（推荐）| Global Installation (Recommended)
-
-一次安装，**所有项目**都可以使用 OMO-SpecFlow。
-
-```bash
-# 1. 克隆仓库
-git clone https://github.com/tavisWei/omo-specflow.git
-cd omo-specflow
-
-# 2. 创建全局配置目录
-mkdir -p ~/.config/opencode/skills
-mkdir -p ~/.config/opencode/commands
-mkdir -p ~/.config/opencode/spec-templates
-
-# 3. 安装 Hook（核心功能）
-cp -r .opencode/hooks/omo-specflow ~/.config/opencode/skills/
-
-# 4. 安装命令
-cp .opencode/commands/spec-start.md ~/.config/opencode/commands/
-
-# 5. 安装规格模板
-cp -r .opencode/spec-templates/* ~/.config/opencode/spec-templates/
-```
-
----
-
-### 项目安装 | Project Installation
-
-仅在当前项目中使用。
+### 一键安装（推荐）| One-Click Install (Recommended)
 
 ```bash
 # 克隆仓库
 git clone https://github.com/tavisWei/omo-specflow.git
 cd omo-specflow
 
-# 复制到项目
-cp -r .opencode /path/to/your/project/
+# 运行安装脚本
+./install.sh
 ```
 
-或作为 Git Submodule：
+**选项**：
+- `./install.sh` - 全局安装（所有项目可用）
+- `./install.sh --project` - 项目安装（仅当前项目）
+
+---
+
+### 手动安装 | Manual Install
+
+#### 全局安装
 
 ```bash
+# 创建目录
+mkdir -p ~/.config/opencode/skills
+mkdir -p ~/.config/opencode/commands
+mkdir -p ~/.config/opencode/spec-templates
+
+# 安装 Hook
+cp -r .opencode/hooks/omo-specflow ~/.config/opencode/skills/
+
+# 安装命令
+cp .opencode/commands/spec-start.md ~/.config/opencode/commands/
+
+# 安装模板
+cp -r .opencode/spec-templates/* ~/.config/opencode/spec-templates/
+```
+
+#### 项目安装
+
+```bash
+# 复制到项目
+cp -r .opencode /path/to/your/project/
+
+# 或作为子模块
 git submodule add https://github.com/tavisWei/omo-specflow.git .opencode/omo-specflow
 ```
 
