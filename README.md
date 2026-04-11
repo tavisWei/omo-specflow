@@ -110,42 +110,54 @@ OMO-SpecFlow 是一套**规格驱动开发**（Spec-Driven Development）工作�
 
 - [Oh My OpenAgent (OMO)](https://github.com/code-yeongyu/oh-my-openagent) 已安装
 
-### 安装步骤 | Installation Steps
+---
 
-#### 方式一：复制文件（推荐）| Copy Files (Recommended)
+### 全局安装（推荐）| Global Installation (Recommended)
+
+一次安装，**所有项目**都可以使用 OMO-SpecFlow。
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/YOUR_USERNAME/omo-specflow.git
-
-# 2. 进入项目目录
+git clone https://github.com/tavisWei/omo-specflow.git
 cd omo-specflow
 
-# 3. 复制配置文件到你的 OMO 项目
-cp -r .opencode/* /path/to/your/project/.opencode/
+# 2. 创建全局配置目录
+mkdir -p ~/.config/opencode/skills
+mkdir -p ~/.config/opencode/commands
+mkdir -p ~/.config/opencode/spec-templates
 
-# 4. 复制规格模板
-cp -r .opencode/spec-templates /path/to/your/project/.opencode/
+# 3. 安装 Hook（核心功能）
+cp -r .opencode/hooks/omo-specflow ~/.config/opencode/skills/
+
+# 4. 安装命令
+cp .opencode/commands/spec-start.md ~/.config/opencode/commands/
+
+# 5. 安装规格模板
+cp -r .opencode/spec-templates/* ~/.config/opencode/spec-templates/
 ```
 
-#### 方式二：作为子模块 | As Submodule
+---
+
+### 项目安装 | Project Installation
+
+仅在当前项目中使用。
 
 ```bash
-# 添加为 git 子模块
-git submodule add https://github.com/YOUR_USERNAME/omo-specflow.git .opencode/omo-specflow
+# 克隆仓库
+git clone https://github.com/tavisWei/omo-specflow.git
+cd omo-specflow
+
+# 复制到项目
+cp -r .opencode /path/to/your/project/
 ```
 
-#### 方式三：手动安装 | Manual Install
+或作为 Git Submodule：
 
 ```bash
-# 创建插件目录
-mkdir -p .opencode/hooks/omo-specflow
-
-# 复制所有文件
-cp hook.ts state.ts task-dispatcher.ts spec-review.ts spec-tracker.ts .opencode/hooks/omo-specflow/
-cp spec-start.md .opencode/commands/
-cp -r spec-templates/ .opencode/
+git submodule add https://github.com/tavisWei/omo-specflow.git .opencode/omo-specflow
 ```
+
+---
 
 ### 验证安装 | Verify Installation
 
