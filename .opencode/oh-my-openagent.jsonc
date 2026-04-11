@@ -1,0 +1,105 @@
+// Oh-My-OpenAgent Configuration
+// OMO-SpecFlow 集成配置
+
+{
+  // 插件配置
+  "plugins": {
+    // OMO-SpecFlow Intent Detector 钩子
+    "omo-specflow": {
+      "enabled": true,
+      "hooks": [
+        "pre-task",
+        "post-task"
+      ],
+      "config": {
+        // 意图检测模型配置
+        "model": "default",
+        // 触发关键词
+        "triggerKeywords": [
+          "需求",
+          "功能",
+          "开发",
+          "实现",
+          "修改",
+          "添加",
+          "创建",
+          "bug",
+          "修复"
+        ],
+        // 关联的模板路径
+        "templatePath": ".opencode/spec-templates",
+        // 自动创建规范文档
+        "autoCreateSpec": true,
+        // 规范文档目录
+        "specDirectory": ".opencode/specs"
+      }
+    }
+  },
+
+  // 命令配置
+  "commands": {
+    // 规范驱动开发命令
+    "spec-start": {
+      "path": ".opencode/commands/spec-start.md",
+      "description": "启动 OMO-SpecFlow 驱动的开发工作流",
+      "aliases": [
+        "/spec",
+        "/specflow"
+      ]
+    }
+  },
+
+  // 工作流配置
+  "workflows": {
+    // OMO-SpecFlow 开发流程
+    "omo-specflow": {
+      "enabled": true,
+      "steps": [
+        {
+          "name": "intent-detection",
+          "description": "检测用户开发意图",
+          "agent": "omo-specflow"
+        },
+        {
+          "name": "spec-generation",
+          "description": "生成规范文档",
+          "agent": "spec-generator"
+        },
+        {
+          "name": "incremental-development",
+          "description": "增量式开发循环",
+          "agent": "omo-agent"
+        }
+      ]
+    }
+  },
+
+  // 模板配置
+  "templates": {
+    // 规范文档模板路径
+    "specTemplates": ".opencode/spec-templates",
+    // 规范文档列表
+    "specList": [
+      "01-需求文档",
+      "02-技术架构",
+      "03-接口文档",
+      "04-设计规范",
+      "05-页面流程",
+      "06-页面功能细节",
+      "07-数据库设计",
+      "08-第三方服务集成",
+      "09-部署架构",
+      "10-测试策略",
+      "11-安全规范",
+      "12-性能要求"
+    ]
+  },
+
+  // 输出配置
+  "output": {
+    // 生成的文件存放目录
+    "specDirectory": ".opencode/specs",
+    // 是否自动保存到notepad
+    "autoNotepad": true
+  }
+}

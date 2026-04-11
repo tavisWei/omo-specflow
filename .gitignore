@@ -1,0 +1,65 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+dist/
+build/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Environment files
+.env
+.env.local
+.env.*.local
+*.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Lock files (may cause merge conflicts)
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+bun.lockb
+
+# OMO/Sisyphus internal
+.sisyphus/boulder.json
+.sisyphus/boulder-state.json
+.sisyphus/*.json
+!.sisyphus/plans/
+!.sisyphus/notepads/
+
+# Spec runtime files (generated during workflow)
+.spec/
+!.spec/.gitkeep
+
+# OpenCode internals
+.opencode/node_modules/
+.opencode/*.log
