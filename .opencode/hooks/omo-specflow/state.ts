@@ -1,5 +1,15 @@
 import * as fs from "fs/promises";
 import * as path from "path";
+import { generateCoverageReport, getState as getTrackerState } from "./spec-tracker.js";
+import { performSpecReview } from "./spec-review.js";
+
+const EVIDENCE_DIR = ".sisyphus/evidence";
+const README_CANDIDATES = ["README.md", "README.zh-CN.md", "README.cn.md", "USAGE.md"] as const;
+
+interface TaskGateBlock {
+  taskNumber: string;
+  block: string;
+}
 
 /**
  * Workflow phases in order
@@ -168,6 +178,39 @@ function getNextPhase(currentPhase: WorkflowPhase): WorkflowPhase | null {
   return WORKFLOW_PHASES[currentIndex + 1];
 }
 
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function parseTaskBlocks(content: string): TaskGateBlock[] {
+  const matches = [...content.matchAll(/^## Task\s+(\d+)\s*:/gm)];
+  return matches.map((match, index) => {
+    const start = match.index ?? 0;
+    const end = matches[index + 1]?.index ?? content.length;
+    return {
+      taskNumber: match[1],
+      block: content.slice(start, end).trim(),
+    };
+  });
+}
+
+function extractEvidencePaths(content: string): string[] {
+  const matches = [...content.matchAll(/Evidence:\s*([^\s`]+)/g)];
+  return [...new Set(matches.map((match) => match[1].trim()))];
+}
+
+async function getExistingReadmeFiles(): Promise<string[]> {
+  const existing = await Promise.all(
+    README_CANDIDATES.map(async (candidate) => ((await pathExists(candidate)) ? candidate : null))
+  );
+  return existing.filter((file): file is string => !!file);
+}
+
 /**
  * Get the current workflow state.
  * Returns default state if no state file exists.
@@ -248,8 +291,174 @@ export async function nextPhase(sessionId?: string): Promise<SpecWorkflowState> 
 }
 
 /**
+ * Phase completion criteria — defines what must be true for each phase to complete.
+ */
+const PHASE_COMPLETION_CHECKS: Record<WorkflowPhase, (specDir: string) => Promise<{ valid: boolean; errors: string[] }>> = {
+  constitution: async (specDir) => {
+    const errors: string[] = [];
+    const specPath = path.join(specDir, "SPEC.md");
+    try {
+      const content = await fs.readFile(specPath, "utf-8");
+      if (!content.includes("Vision") && !content.includes("愿景")) {
+        errors.push("SPEC.md missing Vision section");
+      }
+      if (!content.includes("Values") && !content.includes("价值观")) {
+        errors.push("SPEC.md missing Values section");
+      }
+      if (!content.includes("Constraints") && !content.includes("约束")) {
+        errors.push("SPEC.md missing Constraints section");
+      }
+    } catch {
+      errors.push("SPEC.md not found at " + specPath);
+    }
+    return { valid: errors.length === 0, errors };
+  },
+
+  specify: async (_specDir) => {
+    const errors: string[] = [];
+    try {
+      const report = await generateCoverageReport();
+      if (report.totalClauses < 3) {
+        errors.push(`Only ${report.totalClauses} US/AC clauses registered (minimum 3 required)`);
+      }
+    } catch {
+      errors.push("Failed to check spec-tracker clauses — ensure clauses are registered");
+    }
+    return { valid: errors.length === 0, errors };
+  },
+
+  plan: async (specDir) => {
+    const errors: string[] = [];
+    const tasksPath = path.join(specDir, "TASKS.md");
+    try {
+      const content = await fs.readFile(tasksPath, "utf-8");
+      const taskMatches = content.match(/^## Task \d+/gm);
+      if (!taskMatches || taskMatches.length < 1) {
+        errors.push("TASKS.md must contain at least 1 task (## Task N: format)");
+      }
+    } catch {
+      errors.push("TASKS.md not found at " + tasksPath);
+    }
+    return { valid: errors.length === 0, errors };
+  },
+
+  tasks: async (specDir) => {
+    const errors: string[] = [];
+    const tasksPath = path.join(specDir, "TASKS.md");
+    try {
+      const content = await fs.readFile(tasksPath, "utf-8");
+      const taskBlocks = parseTaskBlocks(content);
+      for (let i = 0; i < taskBlocks.length; i++) {
+        const block = taskBlocks[i].block;
+        if (!block.includes("Acceptance Criteria")) {
+          errors.push(`Task ${taskBlocks[i].taskNumber} missing Acceptance Criteria`);
+        }
+        if (!block.match(/US-\d+|AC-\d+|Spec Refs/)) {
+          errors.push(`Task ${taskBlocks[i].taskNumber} missing spec clause references`);
+        }
+        if (!block.includes("**Files**:") && !block.includes("Files:")) {
+          errors.push(`Task ${taskBlocks[i].taskNumber} missing Files section`);
+        }
+        if (!block.includes("**QA Scenarios**:")) {
+          errors.push(`Task ${taskBlocks[i].taskNumber} missing QA Scenarios`);
+        }
+        if (extractEvidencePaths(block).length === 0) {
+          errors.push(`Task ${taskBlocks[i].taskNumber} missing Evidence path for verification traceability`);
+        }
+      }
+    } catch {
+      errors.push("TASKS.md not found at " + tasksPath);
+    }
+    return { valid: errors.length === 0, errors };
+  },
+
+  implement: async (_specDir) => {
+    const errors: string[] = [];
+    try {
+      const report = await generateCoverageReport();
+      if (report.coveragePercent < 80) {
+        errors.push(`Spec coverage is ${report.coveragePercent}% (minimum 80% required)`);
+      }
+
+      const trackerState = await getTrackerState();
+      const completedTaskRefs = Object.values(trackerState.taskRefs).filter((taskRef) => !!taskRef.completedAt);
+      if (Object.keys(trackerState.taskRefs).length > 0 && completedTaskRefs.length === 0) {
+        errors.push("No tracker tasks are marked completed — implement phase requires completed key tasks before exit");
+      }
+
+      for (const taskRef of completedTaskRefs) {
+        const taskNumberMatch = /(?:^|-)task-(\d+)(?:-|$)/i.exec(taskRef.taskId)
+          ?? /(?:^|-)?(\d+)(?:-|$)/.exec(taskRef.taskId);
+        const evidencePrefix = taskNumberMatch ? `task-${taskNumberMatch[1]}-` : taskRef.taskId;
+        const hasEvidenceDir = await pathExists(EVIDENCE_DIR);
+        if (!hasEvidenceDir) {
+          errors.push(`Evidence directory ${EVIDENCE_DIR} not found for completed task ${taskRef.taskId}`);
+          break;
+        }
+
+        const evidenceFiles = await fs.readdir(EVIDENCE_DIR);
+        const matchingEvidence = evidenceFiles.filter((file) => file.includes(evidencePrefix));
+        if (matchingEvidence.length === 0) {
+          errors.push(`Completed task ${taskRef.taskId} has no evidence file in ${EVIDENCE_DIR}`);
+        }
+      }
+    } catch {
+      errors.push("Failed to generate coverage report");
+    }
+    return { valid: errors.length === 0, errors };
+  },
+
+  complete: async (_specDir) => {
+    const errors: string[] = [];
+    try {
+      const review = await performSpecReview();
+      if (review.verdict !== "OKAY") {
+        errors.push(`Spec review verdict is ${review.verdict}`);
+      }
+      const blockingIssues = review.issues.filter((i) => i.severity === "blocking");
+      if (blockingIssues.length > 0) {
+        for (const issue of blockingIssues) {
+          errors.push(`Blocking: ${issue.description}`);
+        }
+      }
+
+      const readmeFiles = await getExistingReadmeFiles();
+      if (readmeFiles.length === 0) {
+        errors.push("Delivery checklist requires README.md or USAGE.md to be present");
+      }
+
+      if (!(await pathExists(EVIDENCE_DIR))) {
+        errors.push(`Delivery checklist requires ${EVIDENCE_DIR} with QA evidence files`);
+      } else {
+        const evidenceFiles = await fs.readdir(EVIDENCE_DIR);
+        const finalReviewEvidence = evidenceFiles.find((file) => /final-review|review-summary/i.test(file));
+        if (!finalReviewEvidence) {
+          errors.push("Final review evidence file is missing from .sisyphus/evidence/");
+        }
+      }
+    } catch {
+      errors.push("Failed to run spec review");
+    }
+    return { valid: errors.length === 0, errors };
+  },
+};
+
+/**
+ * Validate whether a phase's completion criteria are met.
+ * Returns validation result with any errors found.
+ */
+export async function validatePhaseCompletion(
+  phase: WorkflowPhase,
+  specDir: string = ".spec"
+): Promise<{ valid: boolean; errors: string[] }> {
+  const check = PHASE_COMPLETION_CHECKS[phase];
+  return check(specDir);
+}
+
+/**
  * Mark the current phase as completed.
- * Updates the state to indicate the current phase is done.
+ * Validates phase completion criteria before marking complete.
+ * Throws WorkflowStateError if criteria are not met.
  */
 export async function completePhase(metadata?: Record<string, unknown>): Promise<SpecWorkflowState> {
   const release = await acquireLock(LOCK_FILE_PATH);
@@ -262,6 +471,13 @@ export async function completePhase(metadata?: Record<string, unknown>): Promise
 
     if (currentState.phaseCompleted) {
       throw new WorkflowStateError(`Phase "${currentState.phase}" is already completed.`);
+    }
+
+    const validation = await validatePhaseCompletion(currentState.phase);
+    if (!validation.valid) {
+      throw new WorkflowStateError(
+        `Phase "${currentState.phase}" completion criteria not met:\n- ${validation.errors.join("\n- ")}`
+      );
     }
 
     const newMetadata = metadata

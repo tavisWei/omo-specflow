@@ -50,6 +50,34 @@ export interface ParsedTask {
   acceptanceCriteria: string[];
   /** References to external docs */
   references: string[];
+  /** Specific file paths to create/modify */
+  files: string[];
+  /** Agent-executable QA scenarios */
+  qaScenarios: string;
+  /** Associated spec clause references (US-xxx, AC-xxx) */
+  specRefs: string[];
+  evidence: ParsedTaskEvidence;
+  handoff: ParsedTaskHandoff;
+  traceability: ParsedTaskTraceability;
+}
+export interface ParsedTaskEvidence {
+  paths: string[];
+  minimumCount: number;
+  convention: string;
+}
+export interface ParsedTaskHandoff {
+  currentPhase?: string;
+  completed: string[];
+  pending: string[];
+  blockedBy: string[];
+  keyDocs: string[];
+  nextRecommendedAction?: string;
+}
+export interface ParsedTaskTraceability {
+  clauseIds: string[];
+  acceptanceCriteria: string[];
+  references: string[];
+  files: string[];
 }
 
 /**
@@ -197,6 +225,18 @@ export class SpecTaskDispatcher {
     
     // Extract references
     const references = this.extractReferences(block);
+
+    const files = this.extractFiles(block);
+    const qaScenarios = this.extractSection(block, "QA Scenarios");
+    const specRefs = this.extractSpecRefs(block);
+    const evidence = this.buildEvidenceInfo(block, id);
+    const handoff = this.buildHandoffInfo(block, wave, blockedBy, blocks, references, files);
+    const traceability: ParsedTaskTraceability = {
+      clauseIds: specRefs,
+      acceptanceCriteria,
+      references,
+      files,
+    };
     
     return {
       id,
@@ -211,6 +251,100 @@ export class SpecTaskDispatcher {
       parallelGroup: parallelInfo.parallelGroup,
       acceptanceCriteria,
       references,
+      files,
+      qaScenarios,
+      specRefs,
+      evidence,
+      handoff,
+      traceability,
+    };
+  }
+
+  private dedupe(values: string[]): string[] {
+    return [...new Set(values.map((value) => value.trim()).filter((value) => value.length > 0))];
+  }
+
+  private extractLabeledValue(block: string, ...labels: string[]): string {
+    for (const label of labels) {
+      const pattern = new RegExp(`(?:^|\\n)(?:[-*]\\s*)?(?:\\*\\*)?${label}(?:\\*\\*)?[:：]\\s*(.+)`, "i");
+      const match = block.match(pattern);
+      if (match) {
+        return match[1].trim();
+      }
+    }
+    return "";
+  }
+
+  private parseLooseList(value: string): string[] {
+    if (!value) {
+      return [];
+    }
+
+    return this.dedupe(
+      value
+        .split(/,|\n|;|\|/)
+        .map((item) => item.replace(/^[-*]\s*/, "").trim())
+    );
+  }
+
+  private extractPathLikeValues(value: string): string[] {
+    if (!value) {
+      return [];
+    }
+
+    const matches = value.match(/(?:`([^`]+)`|(\.?(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_.-]+\.(?:txt|md|json|log|html|xml|csv)))/gi) || [];
+    return this.dedupe(
+      matches.map((match) => match.replace(/`/g, "").trim())
+    );
+  }
+
+  private extractEvidencePaths(block: string): string[] {
+    const evidenceSection = this.extractSection(block, "Evidence", "Evidence Paths", "Evidence Files");
+    const inlineEvidence = this.extractLabeledValue(block, "Evidence", "Evidence Paths", "Evidence Files");
+    const combined = [evidenceSection, inlineEvidence].filter(Boolean).join("\n");
+    return this.extractPathLikeValues(combined);
+  }
+
+  private buildEvidenceInfo(block: string, taskId: string): ParsedTaskEvidence {
+    const paths = this.extractEvidencePaths(block);
+
+    return {
+      paths,
+      minimumCount: Math.max(1, paths.length),
+      convention: `.sisyphus/evidence/task-${taskId}-{scenario-slug}.txt`,
+    };
+  }
+
+  private buildHandoffInfo(
+    block: string,
+    wave: number | undefined,
+    blockedBy: string[],
+    blocks: string[],
+    references: string[],
+    files: string[]
+  ): ParsedTaskHandoff {
+    const currentPhase = this.extractLabeledValue(block, "Current Phase", "Phase") || (wave !== undefined ? `Wave ${wave}` : undefined);
+    const completed = this.parseLooseList(this.extractLabeledValue(block, "Completed"));
+    const pending = this.dedupe([
+      ...this.parseLooseList(this.extractLabeledValue(block, "Pending")),
+      ...blocks,
+    ]);
+    const explicitBlockedBy = this.parseLooseList(
+      this.extractLabeledValue(block, "Blocked By", "Blocking Issues")
+    );
+    const keyDocs = this.dedupe([
+      ...this.extractPathLikeValues(this.extractLabeledValue(block, "Key Docs")),
+      ...references,
+      ...files,
+    ]);
+
+    return {
+      currentPhase,
+      completed,
+      pending,
+      blockedBy: this.dedupe([...blockedBy, ...explicitBlockedBy]),
+      keyDocs,
+      nextRecommendedAction: this.extractLabeledValue(block, "Next Recommended Action", "Next Action") || undefined,
     };
   }
 
@@ -327,6 +461,29 @@ export class SpecTaskDispatcher {
     }
     
     return ids;
+  }
+
+  private extractFiles(block: string): string[] {
+    const filesSection = this.extractSection(block, "Files");
+    if (!filesSection) return [];
+    const files: string[] = [];
+    const lines = filesSection.split("\n");
+    for (const line of lines) {
+      const pathMatch = line.match(/`([a-zA-Z0-9_./-]+\.[a-zA-Z]{1,5})`/);
+      if (pathMatch) files.push(pathMatch[1]);
+    }
+    return files;
+  }
+
+  private extractSpecRefs(block: string): string[] {
+    const refsLine = block.match(/\*\*Spec Refs\*\*:\s*(.+)/i);
+    if (!refsLine) {
+      const clausePattern = /(US-\d+|AC-\d+(?:\.\d+)?|FR-\d+|NFR-\d+|REQ-\d+)/gi;
+      const matches = block.match(clausePattern);
+      return matches ? [...new Set(matches.map((m) => m.toUpperCase()))] : [];
+    }
+    const refs = refsLine[1].match(/(US-\d+|AC-\d+(?:\.\d+)?|FR-\d+|NFR-\d+|REQ-\d+)/gi);
+    return refs ? [...new Set(refs.map((r) => r.toUpperCase()))] : [];
   }
 
   /**
@@ -543,7 +700,7 @@ export class SpecTaskDispatcher {
     const taskList = tasks
       .map(
         (task, index) =>
-          `### Task ${task.id}: ${task.title}\n\n${task.description.slice(0, 500)}${task.description.length > 500 ? "..." : ""}\n\n**Category**: ${task.category}\n**Skills**: ${task.skills.join(", ") || "none"}\n\n**Acceptance Criteria**:\n${task.acceptanceCriteria.map((ac) => `- ${ac}`).join("\n")}`
+          `### Task ${task.id}: ${task.title}\n\n${task.description.slice(0, 500)}${task.description.length > 500 ? "..." : ""}\n\n**Category**: ${task.category}\n**Skills**: ${task.skills.join(", ") || "none"}\n\n**Traceability**:\n- Spec Refs: ${task.traceability.clauseIds.join(", ") || "none"}\n- Files: ${task.traceability.files.join(", ") || "none"}\n- References: ${task.traceability.references.join(", ") || "none"}\n\n**Evidence**:\n- Required artifacts: at least ${task.evidence.minimumCount}\n- Explicit paths: ${task.evidence.paths.join(", ") || "none provided"}\n- Default convention: ${task.evidence.convention}\n\n**Handoff**:\n- Current phase: ${task.handoff.currentPhase || "unspecified"}\n- Pending: ${task.handoff.pending.join(", ") || "none"}\n- Blocked By: ${task.handoff.blockedBy.join(", ") || "none"}\n- Key Docs: ${task.handoff.keyDocs.join(", ") || "none"}\n- Next Recommended Action: ${task.handoff.nextRecommendedAction || "none"}\n\n**Acceptance Criteria**:\n${task.acceptanceCriteria.map((ac) => `- ${ac}`).join("\n")}`
       )
       .join("\n\n---\n\n");
     
@@ -663,4 +820,27 @@ export function createDispatcherFromContent(content: string): SpecTaskDispatcher
   const dispatcher = new SpecTaskDispatcher();
   dispatcher.parseTasksContent(content);
   return dispatcher;
+}
+
+export function validateParsedTask(task: ParsedTask): string[] {
+  const missing: string[] = [];
+  if (!task.acceptanceCriteria || task.acceptanceCriteria.length === 0) {
+    missing.push("Acceptance Criteria");
+  }
+  if (!task.files || task.files.length === 0) {
+    missing.push("Files");
+  }
+  if (!task.specRefs || task.specRefs.length === 0) {
+    missing.push("Spec Refs");
+  }
+  if (!task.category) {
+    missing.push("category");
+  }
+  if (!task.evidence?.convention) {
+    missing.push("Evidence convention");
+  }
+  if (!task.handoff || !Array.isArray(task.handoff.keyDocs)) {
+    missing.push("Handoff key docs");
+  }
+  return missing;
 }

@@ -1,6 +1,53 @@
 import * as fs from "fs/promises";
 import * as path from "path";
 
+export type TraceabilityStatus = "pending" | "done" | "blocked";
+
+export type EvidenceOutcome = "pass" | "fail" | "unknown";
+
+export interface EvidenceRecord {
+  path: string;
+  recordedAt: number;
+  outcome?: EvidenceOutcome;
+  summary?: string;
+}
+
+export interface HandoffRecord {
+  currentPhase?: string;
+  completed: string[];
+  pending: string[];
+  blockedBy: string[];
+  keyDocs: string[];
+  nextRecommendedAction?: string;
+  updatedAt: number;
+}
+
+export interface TraceabilityMatrixRow {
+  clauseId: string;
+  taskIds: string[];
+  evidencePaths: string[];
+  status: TraceabilityStatus;
+  notes?: string;
+}
+
+export interface TaskTraceabilityOptions {
+  evidence?: Array<string | Partial<EvidenceRecord>>;
+  filePaths?: string[];
+  references?: string[];
+  status?: TraceabilityStatus;
+  handoff?: Omit<HandoffRecord, "updatedAt">;
+  notes?: string;
+  blockedBy?: string[];
+}
+
+export interface ClauseTraceabilityOptions {
+  evidence?: Array<string | Partial<EvidenceRecord>>;
+  coveredByTasks?: string[];
+  status?: TraceabilityStatus;
+  blockedBy?: string[];
+  notes?: string;
+}
+
 /**
  * Represents a single spec clause with its tracking information
  */
@@ -21,6 +68,10 @@ export interface SpecClause {
   addressedBy?: string;
   /** Notes or comments about implementation */
   notes?: string;
+  status?: TraceabilityStatus;
+  evidence?: EvidenceRecord[];
+  coveredByTasks?: string[];
+  blockedBy?: string[];
 }
 
 /**
@@ -35,6 +86,13 @@ export interface TaskSpecRef {
   createdAt: number;
   /** When the task was completed */
   completedAt?: number;
+  status?: TraceabilityStatus;
+  evidence?: EvidenceRecord[];
+  filePaths?: string[];
+  references?: string[];
+  handoff?: HandoffRecord;
+  notes?: string;
+  blockedBy?: string[];
 }
 
 /**
@@ -69,6 +127,20 @@ export interface SpecCoverageReport {
   }>;
   /** List of incomplete clauses */
   incompleteClauses: SpecClause[];
+  blockedClauses: SpecClause[];
+  traceabilityMatrix: TraceabilityMatrixRow[];
+  evidenceSummary: {
+    tasksWithEvidence: number;
+    tasksWithoutEvidence: string[];
+    clausesWithEvidence: number;
+    clausesWithoutEvidence: string[];
+  };
+  taskSummary: Record<string, {
+    clauseIds: string[];
+    evidencePaths: string[];
+    status: TraceabilityStatus;
+    hasHandoff: boolean;
+  }>;
   /** Version information */
   specVersion: string;
   /** Report generation timestamp */
@@ -136,6 +208,134 @@ function simpleHash(content: string): string {
   return Math.abs(hash).toString(16);
 }
 
+function dedupe(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter((value) => value.length > 0))];
+}
+
+function toEvidenceRecord(entry: string | Partial<EvidenceRecord>): EvidenceRecord {
+  if (typeof entry === "string") {
+    return {
+      path: entry,
+      recordedAt: Date.now(),
+    };
+  }
+
+  return {
+    path: entry.path ?? "",
+    recordedAt: entry.recordedAt ?? Date.now(),
+    outcome: entry.outcome,
+    summary: entry.summary,
+  };
+}
+
+function mergeEvidence(
+  existing: Array<string | Partial<EvidenceRecord>> = [],
+  incoming: Array<string | Partial<EvidenceRecord>> = []
+): EvidenceRecord[] {
+  const merged = [...existing, ...incoming]
+    .map(toEvidenceRecord)
+    .filter((record) => record.path.length > 0);
+
+  const byPath = new Map<string, EvidenceRecord>();
+  for (const record of merged) {
+    const previous = byPath.get(record.path);
+    byPath.set(record.path, {
+      ...previous,
+      ...record,
+      recordedAt: Math.max(previous?.recordedAt ?? 0, record.recordedAt),
+    });
+  }
+
+  return [...byPath.values()];
+}
+
+function normalizeHandoffRecord(handoff?: Partial<HandoffRecord>): HandoffRecord | undefined {
+  if (!handoff) {
+    return undefined;
+  }
+
+  const hasContent = Boolean(
+    handoff.currentPhase ||
+    handoff.nextRecommendedAction ||
+    handoff.completed?.length ||
+    handoff.pending?.length ||
+    handoff.blockedBy?.length ||
+    handoff.keyDocs?.length
+  );
+
+  if (!hasContent) {
+    return undefined;
+  }
+
+  return {
+    currentPhase: handoff.currentPhase,
+    completed: dedupe(handoff.completed ?? []),
+    pending: dedupe(handoff.pending ?? []),
+    blockedBy: dedupe(handoff.blockedBy ?? []),
+    keyDocs: dedupe(handoff.keyDocs ?? []),
+    nextRecommendedAction: handoff.nextRecommendedAction,
+    updatedAt: handoff.updatedAt ?? Date.now(),
+  };
+}
+
+function normalizeClause(clause: SpecClause): SpecClause {
+  const evidence = mergeEvidence(clause.evidence ?? []);
+  const coveredByTasks = dedupe([
+    ...(clause.coveredByTasks ?? []),
+    ...(clause.addressedBy ? [clause.addressedBy] : []),
+  ]);
+  const status = clause.status === "blocked"
+    ? "blocked"
+    : clause.completed
+      ? "done"
+      : "pending";
+
+  return {
+    ...clause,
+    evidence,
+    coveredByTasks,
+    blockedBy: dedupe(clause.blockedBy ?? []),
+    status,
+  };
+}
+
+function normalizeTaskRef(taskRef: TaskSpecRef): TaskSpecRef {
+  const handoff = normalizeHandoffRecord(taskRef.handoff);
+  const status = taskRef.status === "blocked"
+    ? "blocked"
+    : taskRef.completedAt
+      ? "done"
+      : "pending";
+
+  return {
+    ...taskRef,
+    clauseIds: dedupe(taskRef.clauseIds ?? []),
+    evidence: mergeEvidence(taskRef.evidence ?? []),
+    filePaths: dedupe(taskRef.filePaths ?? []),
+    references: dedupe(taskRef.references ?? []),
+    blockedBy: dedupe(taskRef.blockedBy ?? []),
+    handoff,
+    status,
+  };
+}
+
+function normalizeState(state: SpecTrackerState): SpecTrackerState {
+  return {
+    currentVersion: state.currentVersion ?? DEFAULT_STATE.currentVersion,
+    clauses: Object.fromEntries(
+      Object.entries(state.clauses ?? {}).map(([clauseId, clause]) => [clauseId, normalizeClause(clause)])
+    ),
+    taskRefs: Object.fromEntries(
+      Object.entries(state.taskRefs ?? {}).map(([taskId, taskRef]) => [taskId, normalizeTaskRef(taskRef)])
+    ),
+    versionHistory: (state.versionHistory ?? []).map((version) => ({
+      ...version,
+      clauses: version.clauses.map(normalizeClause),
+    })),
+    updatedAt: state.updatedAt ?? Date.now(),
+  };
+}
+
 /**
  * Acquires a file lock using a simple lock file approach.
  */
@@ -174,7 +374,7 @@ async function readStateFile(): Promise<SpecTrackerState | null> {
   try {
     const content = await fs.readFile(TRACKER_STATE_PATH, "utf-8");
     const state = JSON.parse(content) as SpecTrackerState;
-    return state;
+    return normalizeState(state);
   } catch (err: unknown) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
       return null;
@@ -214,7 +414,7 @@ export async function getState(): Promise<SpecTrackerState> {
   const release = await acquireLock(LOCK_FILE_PATH);
   try {
     const state = await readStateFile();
-    return state ?? { ...DEFAULT_STATE };
+    return state ?? normalizeState({ ...DEFAULT_STATE });
   } finally {
     await release();
   }
@@ -227,11 +427,11 @@ export async function setState(state: Partial<SpecTrackerState> & { currentVersi
   const release = await acquireLock(LOCK_FILE_PATH);
   try {
     const currentState = await readStateFile();
-    const newState: SpecTrackerState = {
+    const newState = normalizeState({
       ...currentState ?? DEFAULT_STATE,
       ...state,
       updatedAt: Date.now(),
-    };
+    });
 
     await writeStateFile(newState);
     return newState;
@@ -260,6 +460,10 @@ export async function registerClause(
       title,
       content,
       completed: false,
+      status: "pending",
+      evidence: [],
+      coveredByTasks: [],
+      blockedBy: [],
     };
 
     state.clauses[clauseId] = clause;
@@ -295,6 +499,10 @@ export async function registerClauses(clauses: Array<{
         title,
         content,
         completed: false,
+        status: "pending",
+        evidence: [],
+        coveredByTasks: [],
+        blockedBy: [],
       };
       state.clauses[clauseId] = clause;
       registered.push(clause);
@@ -311,19 +519,45 @@ export async function registerClauses(clauses: Array<{
 /**
  * Record that a task addresses specific spec clauses.
  */
-export async function recordTaskSpecRefs(taskId: string, clauseIds: string[]): Promise<TaskSpecRef> {
+export async function recordTaskSpecRefs(
+  taskId: string,
+  clauseIds: string[],
+  options: TaskTraceabilityOptions = {}
+): Promise<TaskSpecRef> {
   const release = await acquireLock(LOCK_FILE_PATH);
   try {
     const currentState = await readStateFile();
     const state = currentState ?? { ...DEFAULT_STATE };
 
-    const taskRef: TaskSpecRef = {
+    const existingTaskRef = state.taskRefs[taskId];
+    const taskRef = normalizeTaskRef({
       taskId,
-      clauseIds,
-      createdAt: Date.now(),
-    };
+      clauseIds: dedupe([...(existingTaskRef?.clauseIds ?? []), ...clauseIds]),
+      createdAt: existingTaskRef?.createdAt ?? Date.now(),
+      completedAt: existingTaskRef?.completedAt,
+      status: options.status ?? existingTaskRef?.status,
+      evidence: mergeEvidence(existingTaskRef?.evidence ?? [], options.evidence ?? []),
+      filePaths: dedupe([...(existingTaskRef?.filePaths ?? []), ...(options.filePaths ?? [])]),
+      references: dedupe([...(existingTaskRef?.references ?? []), ...(options.references ?? [])]),
+      handoff: normalizeHandoffRecord(options.handoff ?? existingTaskRef?.handoff),
+      notes: options.notes ?? existingTaskRef?.notes,
+      blockedBy: dedupe([...(existingTaskRef?.blockedBy ?? []), ...(options.blockedBy ?? [])]),
+    });
 
     state.taskRefs[taskId] = taskRef;
+
+    for (const clauseId of taskRef.clauseIds) {
+      const clause = state.clauses[clauseId];
+      if (!clause) {
+        continue;
+      }
+
+      state.clauses[clauseId] = normalizeClause({
+        ...clause,
+        coveredByTasks: dedupe([...(clause.coveredByTasks ?? []), taskId]),
+      });
+    }
+
     state.updatedAt = Date.now();
 
     await writeStateFile(state);
@@ -336,7 +570,11 @@ export async function recordTaskSpecRefs(taskId: string, clauseIds: string[]): P
 /**
  * Mark a task as completed and update addressed clauses.
  */
-export async function completeTask(taskId: string, notes?: string): Promise<SpecTrackerState> {
+export async function completeTask(
+  taskId: string,
+  notes?: string,
+  options: TaskTraceabilityOptions = {}
+): Promise<SpecTrackerState> {
   const release = await acquireLock(LOCK_FILE_PATH);
   try {
     const currentState = await readStateFile();
@@ -351,22 +589,34 @@ export async function completeTask(taskId: string, notes?: string): Promise<Spec
 
     // Mark task as completed
     taskRef.completedAt = Date.now();
+    taskRef.status = "done";
+    taskRef.notes = notes ?? options.notes ?? taskRef.notes;
+    taskRef.evidence = mergeEvidence(taskRef.evidence ?? [], options.evidence ?? []);
+    taskRef.filePaths = dedupe([...(taskRef.filePaths ?? []), ...(options.filePaths ?? [])]);
+    taskRef.references = dedupe([...(taskRef.references ?? []), ...(options.references ?? [])]);
+    taskRef.blockedBy = dedupe([...(taskRef.blockedBy ?? []), ...(options.blockedBy ?? [])]);
+    taskRef.handoff = normalizeHandoffRecord(options.handoff ?? taskRef.handoff);
 
     // Mark all addressed clauses as completed
     for (const clauseId of taskRef.clauseIds) {
       if (currentState.clauses[clauseId]) {
-        currentState.clauses[clauseId].completed = true;
-        currentState.clauses[clauseId].completedAt = Date.now();
-        currentState.clauses[clauseId].addressedBy = taskId;
-        if (notes) {
-          currentState.clauses[clauseId].notes = notes;
-        }
+        currentState.clauses[clauseId] = normalizeClause({
+          ...currentState.clauses[clauseId],
+          completed: true,
+          completedAt: Date.now(),
+          addressedBy: taskId,
+          notes: notes ?? options.notes ?? currentState.clauses[clauseId].notes,
+          status: "done",
+          evidence: mergeEvidence(currentState.clauses[clauseId].evidence ?? [], taskRef.evidence ?? []),
+          coveredByTasks: dedupe([...(currentState.clauses[clauseId].coveredByTasks ?? []), taskId]),
+          blockedBy: dedupe(currentState.clauses[clauseId].blockedBy ?? []),
+        });
       }
     }
 
     currentState.updatedAt = Date.now();
     await writeStateFile(currentState);
-    return currentState;
+    return normalizeState(currentState);
   } finally {
     await release();
   }
@@ -378,7 +628,8 @@ export async function completeTask(taskId: string, notes?: string): Promise<Spec
 export async function markClauseComplete(
   clauseId: string,
   addressedBy?: string,
-  notes?: string
+  notes?: string,
+  options: ClauseTraceabilityOptions = {}
 ): Promise<SpecClause> {
   const release = await acquireLock(LOCK_FILE_PATH);
   try {
@@ -392,18 +643,34 @@ export async function markClauseComplete(
       throw new SpecTrackerError(`Clause not found: ${clauseId}`);
     }
 
-    clause.completed = true;
-    clause.completedAt = Date.now();
-    if (addressedBy) {
-      clause.addressedBy = addressedBy;
-    }
-    if (notes) {
-      clause.notes = notes;
+    const updatedClause = normalizeClause({
+      ...clause,
+      completed: true,
+      completedAt: Date.now(),
+      addressedBy: addressedBy ?? clause.addressedBy,
+      notes: notes ?? options.notes ?? clause.notes,
+      status: "done",
+      evidence: mergeEvidence(clause.evidence ?? [], options.evidence ?? []),
+      coveredByTasks: dedupe([
+        ...(clause.coveredByTasks ?? []),
+        ...(addressedBy ? [addressedBy] : []),
+        ...(options.coveredByTasks ?? []),
+      ]),
+      blockedBy: dedupe([...(clause.blockedBy ?? []), ...(options.blockedBy ?? [])]),
+    });
+
+    currentState.clauses[clauseId] = updatedClause;
+
+    if (addressedBy && currentState.taskRefs[addressedBy]) {
+      currentState.taskRefs[addressedBy] = normalizeTaskRef({
+        ...currentState.taskRefs[addressedBy],
+        clauseIds: dedupe([...(currentState.taskRefs[addressedBy].clauseIds ?? []), clauseId]),
+      });
     }
 
     currentState.updatedAt = Date.now();
     await writeStateFile(currentState);
-    return clause;
+    return updatedClause;
   } finally {
     await release();
   }
@@ -431,6 +698,83 @@ export async function getClausesBySection(section: string): Promise<SpecClause[]
 export async function getIncompleteClauses(): Promise<SpecClause[]> {
   const state = await getState();
   return Object.values(state.clauses).filter((clause) => !clause.completed);
+}
+
+export async function recordTaskEvidence(
+  taskId: string,
+  evidence: Array<string | Partial<EvidenceRecord>>
+): Promise<TaskSpecRef> {
+  const state = await getState();
+  const taskRef = state.taskRefs[taskId];
+  if (!taskRef) {
+    throw new SpecTrackerError(`No spec reference found for task: ${taskId}`);
+  }
+
+  return recordTaskSpecRefs(taskId, taskRef.clauseIds, { evidence });
+}
+
+export async function recordClauseEvidence(
+  clauseId: string,
+  evidence: Array<string | Partial<EvidenceRecord>>
+): Promise<SpecClause> {
+  const release = await acquireLock(LOCK_FILE_PATH);
+  try {
+    const currentState = await readStateFile();
+    if (!currentState) {
+      throw new SpecTrackerError("No spec tracker state found. Initialize tracking first.");
+    }
+
+    const clause = currentState.clauses[clauseId];
+    if (!clause) {
+      throw new SpecTrackerError(`Clause not found: ${clauseId}`);
+    }
+
+    const updatedClause = normalizeClause({
+      ...clause,
+      evidence: mergeEvidence(clause.evidence ?? [], evidence),
+    });
+
+    currentState.clauses[clauseId] = updatedClause;
+    currentState.updatedAt = Date.now();
+    await writeStateFile(currentState);
+    return updatedClause;
+  } finally {
+    await release();
+  }
+}
+
+export async function updateTaskHandoff(
+  taskId: string,
+  handoff: Omit<HandoffRecord, "updatedAt">
+): Promise<TaskSpecRef> {
+  const state = await getState();
+  const taskRef = state.taskRefs[taskId];
+  if (!taskRef) {
+    throw new SpecTrackerError(`No spec reference found for task: ${taskId}`);
+  }
+
+  return recordTaskSpecRefs(taskId, taskRef.clauseIds, { handoff });
+}
+
+export async function getTraceabilityMatrix(): Promise<TraceabilityMatrixRow[]> {
+  const state = await getState();
+  return Object.values(state.clauses).map((clause) => ({
+    clauseId: clause.id,
+    taskIds: dedupe([
+      ...(clause.coveredByTasks ?? []),
+      ...Object.values(state.taskRefs)
+        .filter((taskRef) => taskRef.clauseIds.includes(clause.id))
+        .map((taskRef) => taskRef.taskId),
+    ]),
+    evidencePaths: mergeEvidence(
+      clause.evidence ?? [],
+      Object.values(state.taskRefs)
+        .filter((taskRef) => taskRef.clauseIds.includes(clause.id))
+        .flatMap((taskRef) => taskRef.evidence ?? [])
+    ).map((record) => record.path),
+    status: clause.status ?? (clause.completed ? "done" : "pending"),
+    notes: clause.notes,
+  }));
 }
 
 /**
@@ -465,6 +809,26 @@ export async function generateCoverageReport(): Promise<SpecCoverageReport> {
   }
 
   const incompleteClauses = clauses.filter((c) => !c.completed);
+  const blockedClauses = clauses.filter((c) => c.status === "blocked");
+  const traceabilityMatrix = await getTraceabilityMatrix();
+  const taskRefs = Object.values(state.taskRefs);
+  const taskSummary = Object.fromEntries(
+    taskRefs.map((taskRef) => [
+      taskRef.taskId,
+      {
+        clauseIds: taskRef.clauseIds,
+        evidencePaths: (taskRef.evidence ?? []).map((record) => record.path),
+        status: taskRef.status ?? (taskRef.completedAt ? "done" : "pending"),
+        hasHandoff: Boolean(taskRef.handoff),
+      },
+    ])
+  );
+  const evidenceSummary = {
+    tasksWithEvidence: taskRefs.filter((taskRef) => (taskRef.evidence?.length ?? 0) > 0).length,
+    tasksWithoutEvidence: taskRefs.filter((taskRef) => (taskRef.evidence?.length ?? 0) === 0).map((taskRef) => taskRef.taskId),
+    clausesWithEvidence: clauses.filter((clause) => (clause.evidence?.length ?? 0) > 0).length,
+    clausesWithoutEvidence: clauses.filter((clause) => (clause.evidence?.length ?? 0) === 0).map((clause) => clause.id),
+  };
 
   return {
     totalClauses,
@@ -472,6 +836,10 @@ export async function generateCoverageReport(): Promise<SpecCoverageReport> {
     coveragePercent,
     coverageBySection,
     incompleteClauses,
+    blockedClauses,
+    traceabilityMatrix,
+    evidenceSummary,
+    taskSummary,
     specVersion: state.currentVersion,
     generatedAt: Date.now(),
   };
@@ -513,6 +881,10 @@ export async function updateSpecVersion(
         title: c.title,
         content: c.content,
         completed: false, // Reset completion on spec update
+        status: "pending",
+        evidence: [],
+        coveredByTasks: [],
+        blockedBy: [],
       });
     }
 
@@ -528,10 +900,22 @@ export async function updateSpecVersion(
         added.push(newClause);
       } else if (existing.content !== newClause.content) {
         // Preserve completion status if content didn't change meaningfully
+        const mergedClause = normalizeClause({
+          ...newClause,
+          completed: existing.completed,
+          completedAt: existing.completedAt,
+          addressedBy: existing.addressedBy,
+          notes: existing.notes,
+          status: existing.status,
+          evidence: existing.evidence,
+          coveredByTasks: existing.coveredByTasks,
+          blockedBy: existing.blockedBy,
+        });
         modified.push({
           before: existing,
-          after: { ...newClause, completed: existing.completed, addressedBy: existing.addressedBy },
+          after: mergedClause,
         });
+        newClauseMap.set(clauseId, mergedClause);
       } else {
         // No change, preserve existing clause data
         newClauseMap.set(clauseId, { ...existing });

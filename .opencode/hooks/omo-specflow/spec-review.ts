@@ -2,12 +2,19 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import {
   getState,
-  getClause,
   getIncompleteClauses,
   generateCoverageReport,
-  type SpecClause,
   type SpecCoverageReport,
 } from "./spec-tracker.js";
+
+const EVIDENCE_DIR = ".sisyphus/evidence";
+const README_CANDIDATES = ["README.md", "README.zh-CN.md", "README.cn.md", "USAGE.md"] as const;
+
+interface ParsedTaskBlock {
+  taskNumber: string;
+  title: string;
+  block: string;
+}
 
 /**
  * Path to the SPEC.md file
@@ -98,19 +105,74 @@ async function readFileSafe(filePath: string): Promise<string | null> {
   }
 }
 
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function parseTaskBlocks(content: string): ParsedTaskBlock[] {
+  const matches = [...content.matchAll(/^## Task\s+(\d+)\s*:\s*(.+)$/gm)];
+
+  return matches.map((match, index) => {
+    const blockStart = match.index ?? 0;
+    const blockEnd = matches[index + 1]?.index ?? content.length;
+    return {
+      taskNumber: match[1],
+      title: match[2].trim(),
+      block: content.slice(blockStart, blockEnd).trim(),
+    };
+  });
+}
+
+function extractEvidencePaths(content: string): string[] {
+  const matches = [...content.matchAll(/Evidence:\s*([^\s`]+)/g)];
+  return [...new Set(matches.map((match) => match[1].trim()))];
+}
+
+function extractFilesList(taskBlock: string): string[] {
+  const filesSectionMatch = /\*\*Files\*\*:\s*([\s\S]*?)(?:\n\*\*[A-Z][\w\s/()-]*\*\*:|$)/.exec(taskBlock);
+  if (!filesSectionMatch) {
+    return [];
+  }
+
+  return filesSectionMatch[1]
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("- "));
+}
+
+async function findReadmeLikeFiles(): Promise<string[]> {
+  const existing = await Promise.all(
+    README_CANDIDATES.map(async (candidate) => ((await pathExists(candidate)) ? candidate : null))
+  );
+  return existing.filter((file): file is string => !!file);
+}
+
+async function readTrackerStateSafe(): Promise<Awaited<ReturnType<typeof getState>> | null> {
+  try {
+    return await getState();
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Extract user stories and acceptance criteria from SPEC.md
  * Format: US-XXX, AC-XXX.X patterns
  */
 function extractSpecClauses(content: string): Array<{
   id: string;
-  type: "US" | "AC" | "section";
+  type: "US" | "AC" | "FR" | "NFR" | "REQ" | "section";
   content: string;
   section: string;
 }> {
   const clauses: Array<{
     id: string;
-    type: "US" | "AC" | "section";
+    type: "US" | "AC" | "FR" | "NFR" | "REQ" | "section";
     content: string;
     section: string;
   }> = [];
@@ -120,8 +182,8 @@ function extractSpecClauses(content: string): Array<{
 
   // Match section headers (# ## ###)
   const sectionPattern = /^#{1,3}\s+(.+)$/;
-  // Match US-XXX and AC-XXX.X patterns
-  const clausePattern = /^(US-\d+|AC-\d+(?:\.\d+)?)\s*[:\.]?\s*(.+)$/i;
+  // Match US-XXX, AC-XXX.X, FR-XXX, NFR-XXX, REQ-XXX patterns
+  const clausePattern = /^(US-\d+|AC-\d+(?:\.\d+)?|FR-\d+|NFR-\d+|REQ-\d+)\s*[:\.]?\s*(.+)$/i;
 
   for (const line of lines) {
     const sectionMatch = sectionPattern.exec(line);
@@ -133,10 +195,10 @@ function extractSpecClauses(content: string): Array<{
     const clauseMatch = clausePattern.exec(line);
     if (clauseMatch) {
       const id = clauseMatch[1].toUpperCase();
-      const type = id.startsWith("US-") ? "US" : "AC";
+      const prefix = id.split("-")[0] as "US" | "AC" | "FR" | "NFR" | "REQ";
       clauses.push({
         id,
-        type,
+        type: prefix,
         content: clauseMatch[2].trim(),
         section: currentSection,
       });
@@ -198,7 +260,7 @@ function extractTaskRefs(content: string): Array<{
 function verifyTaskSpecAlignment(
   taskDescription: string,
   clauseIds: string[],
-  specClauses: Array<{ id: string; type: "US" | "AC"; content: string; section: string }>
+  specClauses: Array<{ id: string; type: "US" | "AC" | "FR" | "NFR" | "REQ" | "section"; content: string; section: string }>
 ): { aligned: boolean; issues: SpecReviewIssue[] } {
   const issues: SpecReviewIssue[] = [];
 
@@ -309,17 +371,27 @@ export async function postCompletionVerify(
   }
 
   const addressedClauses = [...new Set(refs)];
+  const evidencePaths = extractEvidencePaths(taskDescription).filter((evidencePath) => evidencePath.startsWith(EVIDENCE_DIR));
+
+  if (deliverables.length === 0) {
+    discrepancies.push({
+      severity: "warning",
+      category: "completeness",
+      description: "Task completed but no deliverables were recorded",
+      suggestion: "Record changed files, evidence artifacts, or review outputs before marking completion",
+    });
+  }
+
+  if (evidencePaths.length === 0) {
+    discrepancies.push({
+      severity: "warning",
+      category: "compliance",
+      description: "Task completion has no evidence reference",
+      suggestion: "Add an Evidence path under QA Scenarios so the completion claim is traceable",
+    });
+  }
 
   if (addressedClauses.length === 0) {
-    // No specific clauses - just verify deliverables exist
-    if (deliverables.length === 0) {
-      discrepancies.push({
-        severity: "warning",
-        category: "completeness",
-        description: "Task completed but no deliverables found",
-        suggestion: "Ensure files were created or changes were made",
-      });
-    }
     return {
       deliverablesMatch: discrepancies.length === 0,
       confirmedClauses: [],
@@ -469,6 +541,31 @@ export async function performSpecReview(planPath?: string): Promise<SpecReviewRe
     });
   }
 
+  const specDir = path.dirname(SPEC_PATH);
+  const templateIssues = await checkTemplateCompleteness(specDir);
+  issues.push(...templateIssues);
+
+  const fileRefIssues = await checkFileReferences(tasksContent);
+  issues.push(...fileRefIssues);
+
+  const evidenceIssues = await checkEvidenceTraceability(tasksContent, specClauses);
+  issues.push(...evidenceIssues);
+
+  const deliveryIssues = await checkDeliveryReadiness();
+  issues.push(...deliveryIssues);
+
+  const changeManagementIssues = await checkChangeManagementReadiness();
+  issues.push(...changeManagementIssues);
+
+  const taskBlocks = parseTaskBlocks(tasksContent);
+  for (let i = 0; i < taskBlocks.length; i++) {
+    const taskIssues = validateTaskQuality(taskBlocks[i].block);
+    for (const issue of taskIssues) {
+      issue.description = `Task ${taskBlocks[i].taskNumber}: ${issue.description}`;
+    }
+    issues.push(...taskIssues);
+  }
+
   // Determine verdict
   const blockingIssues = issues.filter((i) => i.severity === "blocking");
   const verdict: SpecReviewVerdict =
@@ -478,8 +575,8 @@ export async function performSpecReview(planPath?: string): Promise<SpecReviewRe
     verdict === "REJECT"
       ? `Spec review found ${blockingIssues.length} blocking issue(s). Please fix before proceeding.`
       : verdict === "WARNING"
-        ? `Spec review found ${issues.length} non-blocking issue(s). Review recommended.`
-        : `Spec review passed. ${coverage.completedClauses}/${coverage.totalClauses} clauses complete (${coverage.coveragePercent}%).`;
+        ? `Spec review found ${issues.length} non-blocking issue(s). Review evidence, delivery readiness, and traceability before proceeding.`
+        : `Spec review passed. ${coverage.completedClauses}/${coverage.totalClauses} clauses complete (${coverage.coveragePercent}%), with delivery and evidence checks satisfied.`;
 
   return {
     verdict,
@@ -534,7 +631,7 @@ export function formatReviewResult(result: SpecReviewResult): string {
       ? "❌ [REJECT]" 
       : "⚠️ [WARNING]";
 
-  let output = `${header}\n\n**Summary**: ${result.summary}\n`;
+  let output = `${header}\n\n**Verdict**: ${result.verdict}\n**Summary**: ${result.summary}\n`;
 
   if (result.issues.length > 0) {
     const blocking = result.issues.filter((i) => i.severity === "blocking");
@@ -567,12 +664,317 @@ export function formatReviewResult(result: SpecReviewResult): string {
         output += "\n";
       });
       if (info.length > 5) {
-        output += `_... and ${info.length - 5} more notes`;\n`;
+        output += `_... and ${info.length - 5} more notes_\n`;
       }
     }
   }
 
   return output;
+}
+
+/**
+ * Validate a single task block for quality requirements.
+ * Checks for acceptance criteria, file paths, spec clause references, and QA scenarios.
+ */
+export function validateTaskQuality(taskBlock: string): SpecReviewIssue[] {
+  const issues: SpecReviewIssue[] = [];
+
+  if (!taskBlock.includes("Acceptance Criteria")) {
+    issues.push({
+      severity: "blocking",
+      category: "completeness",
+      description: "Task missing Acceptance Criteria section",
+      suggestion: "Add **Acceptance Criteria**: with checkbox items",
+    });
+  }
+
+  if (!taskBlock.includes("**Files**:") && !taskBlock.includes("Files:")) {
+    issues.push({
+      severity: "blocking",
+      category: "completeness",
+      description: "Task missing Files section — no concrete file paths specified",
+      suggestion: "Add **Files**: listing specific files to create/modify",
+    });
+  } else if (extractFilesList(taskBlock).length === 0) {
+    issues.push({
+      severity: "blocking",
+      category: "completeness",
+      description: "Task Files section is present but empty",
+      suggestion: "List 1-3 concrete files so implementation scope is traceable",
+    });
+  }
+
+  const clauseRefPattern = /(US-\d+|AC-\d+(?:\.\d+)?|FR-\d+|NFR-\d+|REQ-\d+)/gi;
+  if (!clauseRefPattern.test(taskBlock)) {
+    issues.push({
+      severity: "warning",
+      category: "reference",
+      description: "Task has no spec clause references (US-xxx, AC-xxx, etc.)",
+      suggestion: "Add **Spec Refs**: linking to SPEC.md clauses",
+    });
+  }
+
+  if (!taskBlock.includes("category:")) {
+    issues.push({
+      severity: "warning",
+      category: "completeness",
+      description: "Task missing category tag for dispatcher routing",
+      suggestion: "Add - category: quick|deep|unspecified-high|writing|oracle",
+    });
+  }
+
+  if (!taskBlock.includes("**QA Scenarios**:")) {
+    issues.push({
+      severity: "warning",
+      category: "compliance",
+      description: "Task missing QA Scenarios section",
+      suggestion: "Add at least one executable QA scenario with Tool, Steps, Expected Result, and Evidence",
+    });
+  } else if (!taskBlock.includes("Evidence:")) {
+    issues.push({
+      severity: "warning",
+      category: "compliance",
+      description: "Task QA Scenarios do not declare any Evidence path",
+      suggestion: `Add Evidence: ${EVIDENCE_DIR}/task-{id}-{scenario}.txt so verification is traceable`,
+    });
+  }
+
+  if (!taskBlock.includes("**Parallelization**:")) {
+    issues.push({
+      severity: "warning",
+      category: "compliance",
+      description: "Task missing Parallelization section",
+      suggestion: "Add Can Run In Parallel / Parallel Group / Blocked By / Blocks fields",
+    });
+  }
+
+  return issues;
+}
+
+async function checkEvidenceTraceability(
+  tasksContent: string,
+  specClauses: Array<{ id: string; type: "US" | "AC" | "FR" | "NFR" | "REQ" | "section"; content: string; section: string }>
+): Promise<SpecReviewIssue[]> {
+  const issues: SpecReviewIssue[] = [];
+  const trackerState = await readTrackerStateSafe();
+  const taskBlocks = parseTaskBlocks(tasksContent);
+  const taskBlocksByNumber = new Map(taskBlocks.map((task) => [task.taskNumber, task]));
+  const clauseMap = new Map(specClauses.map((clause) => [clause.id, clause]));
+
+  for (const task of taskBlocks) {
+    const evidencePaths = extractEvidencePaths(task.block);
+    if (evidencePaths.length === 0) {
+      issues.push({
+        severity: "warning",
+        category: "compliance",
+        description: `Task ${task.taskNumber} has no evidence path, so delivery claims will not be traceable`,
+        suggestion: `Add Evidence: ${EVIDENCE_DIR}/task-${task.taskNumber}-{scenario}.txt under QA Scenarios`,
+      });
+    }
+  }
+
+  if (!trackerState) {
+    return issues;
+  }
+
+  for (const taskRef of Object.values(trackerState.taskRefs)) {
+    if (!taskRef.completedAt) {
+      continue;
+    }
+
+    const taskNumberMatch = /(?:^|-)task-(\d+)(?:-|$)/i.exec(taskRef.taskId)
+      ?? /(?:^|-)?(\d+)(?:-|$)/.exec(taskRef.taskId);
+    const taskBlock = taskNumberMatch ? taskBlocksByNumber.get(taskNumberMatch[1]) : undefined;
+    const evidencePaths = taskBlock ? extractEvidencePaths(taskBlock.block) : [];
+
+    if (!taskBlock) {
+      issues.push({
+        severity: "warning",
+        category: "reference",
+        description: `Completed tracker task "${taskRef.taskId}" could not be mapped back to TASKS.md`,
+        suggestion: "Keep task IDs and TASKS.md headings aligned so evidence can be audited",
+      });
+      continue;
+    }
+
+    if (evidencePaths.length === 0) {
+      issues.push({
+        severity: "blocking",
+        category: "compliance",
+        description: `Task ${taskBlock.taskNumber} is marked completed in tracker but has no evidence reference`,
+        affectedClauses: taskRef.clauseIds,
+        suggestion: "Add at least one evidence file reference before claiming the task is complete",
+      });
+      continue;
+    }
+
+    const existingEvidence = await Promise.all(
+      evidencePaths.map(async (evidencePath) => ((await pathExists(evidencePath)) ? evidencePath : null))
+    );
+    const foundEvidence = existingEvidence.filter((value): value is string => !!value);
+
+    if (foundEvidence.length === 0) {
+      issues.push({
+        severity: "blocking",
+        category: "compliance",
+        description: `Task ${taskBlock.taskNumber} is marked completed but none of its evidence files exist`,
+        affectedClauses: taskRef.clauseIds,
+        suggestion: "Run the QA scenario and write the evidence file before closing the task",
+      });
+    }
+
+    const missingClauseRefs = taskRef.clauseIds.filter((clauseId) => !clauseMap.has(clauseId));
+    if (missingClauseRefs.length > 0) {
+      issues.push({
+        severity: "warning",
+        category: "reference",
+        description: `Task ${taskBlock.taskNumber} references tracker clauses missing from SPEC.md: ${missingClauseRefs.join(", ")}`,
+        affectedClauses: missingClauseRefs,
+        suggestion: "Update SPEC.md or tracker state so traceability remains bidirectional",
+      });
+    }
+  }
+
+  return issues;
+}
+
+async function checkDeliveryReadiness(): Promise<SpecReviewIssue[]> {
+  const issues: SpecReviewIssue[] = [];
+  const readmeFiles = await findReadmeLikeFiles();
+
+  if (readmeFiles.length === 0) {
+    issues.push({
+      severity: "warning",
+      category: "compliance",
+      description: "Delivery checklist expects README or usage documentation, but none was found",
+      suggestion: "Add README.md or USAGE.md so recipients can operate the delivered workflow",
+    });
+  }
+
+  if (!(await pathExists(EVIDENCE_DIR))) {
+    issues.push({
+      severity: "warning",
+      category: "compliance",
+      description: `Evidence directory ${EVIDENCE_DIR} not found`,
+      suggestion: "Store task and final-review evidence under .sisyphus/evidence/",
+    });
+    return issues;
+  }
+
+  const evidenceFiles = await fs.readdir(EVIDENCE_DIR);
+  const finalReviewEvidence = evidenceFiles.find((file) => /final-review|review-summary/i.test(file));
+  if (!finalReviewEvidence) {
+    issues.push({
+      severity: "warning",
+      category: "compliance",
+      description: "Final review evidence file not found in .sisyphus/evidence/",
+      suggestion: "Write a final-review-summary.txt (or equivalent) to capture review evidence",
+    });
+  }
+
+  return issues;
+}
+
+async function checkChangeManagementReadiness(): Promise<SpecReviewIssue[]> {
+  const trackerState = await readTrackerStateSafe();
+  if (!trackerState || trackerState.versionHistory.length <= 1) {
+    return [];
+  }
+
+  const specContent = await readFileSafe(SPEC_PATH);
+  const tasksContent = await readFileSafe(TASKS_PATH);
+  const combinedContent = `${specContent ?? ""}\n${tasksContent ?? ""}`;
+
+  if (/Affected Docs\s*\|\s*Affected Tasks\s*\|\s*Reason/i.test(combinedContent) || /变更记录|Change Log/i.test(combinedContent)) {
+    return [];
+  }
+
+  return [{
+    severity: "warning",
+    category: "compliance",
+    description: "Spec tracker shows version history, but no change log was found in SPEC.md or TASKS.md",
+    suggestion: "Add a change record table when requirements, acceptance criteria, or constraints change",
+  }];
+}
+
+/**
+ * Check template completeness — verifies generated spec docs have no empty sections or bare placeholders.
+ */
+async function checkTemplateCompleteness(specDir: string): Promise<SpecReviewIssue[]> {
+  const issues: SpecReviewIssue[] = [];
+  const barePlaceholderPattern = /\[(?!NEEDS CLARIFICATION)[A-Z][A-Za-z\s]+\]/g;
+
+  try {
+    const entries = await fs.readdir(specDir);
+    const specFiles = entries.filter((e: string) => e.endsWith(".md") && e !== "TASKS.md");
+
+    for (const file of specFiles) {
+      const content = await readFileSafe(path.join(specDir, file));
+      if (!content) continue;
+
+      const placeholders = content.match(barePlaceholderPattern);
+      if (placeholders && placeholders.length > 0) {
+        issues.push({
+          severity: "warning",
+          category: "completeness",
+          description: `${file} contains ${placeholders.length} bare placeholder(s): ${placeholders.slice(0, 3).join(", ")}`,
+          suggestion: "Replace placeholders with concrete content or [NEEDS CLARIFICATION]",
+        });
+      }
+
+      const lines = content.split("\n");
+      let currentHeading = "";
+      let emptySection = false;
+      for (let i = 0; i < lines.length; i++) {
+        if (/^#{1,3}\s+/.test(lines[i])) {
+          if (emptySection && currentHeading) {
+            issues.push({
+              severity: "info",
+              category: "completeness",
+              description: `${file}: section "${currentHeading}" appears empty`,
+              suggestion: "Fill in section content or mark as N/A",
+            });
+          }
+          currentHeading = lines[i].replace(/^#+\s+/, "").trim();
+          emptySection = true;
+        } else if (lines[i].trim().length > 0) {
+          emptySection = false;
+        }
+      }
+    }
+  } catch {
+    // specDir might not exist yet
+  }
+
+  return issues;
+}
+
+/**
+ * Check file reference validity — verifies that file paths mentioned in TASKS.md actually exist.
+ */
+async function checkFileReferences(tasksContent: string): Promise<SpecReviewIssue[]> {
+  const issues: SpecReviewIssue[] = [];
+  const filePathPattern = /`([a-zA-Z0-9_./-]+\.[a-zA-Z]{1,5})`/g;
+  let match;
+
+  while ((match = filePathPattern.exec(tasksContent)) !== null) {
+    const filePath = match[1];
+    if (filePath.startsWith(".spec/") || filePath.startsWith(".sisyphus/")) continue;
+    if (filePath.includes("*") || filePath.includes("...")) continue;
+
+    try {
+      await fs.access(filePath);
+    } catch {
+      issues.push({
+        severity: "info",
+        category: "reference",
+        description: `Referenced file "${filePath}" does not exist yet`,
+        suggestion: "This file will be created during implementation — verify path is correct",
+      });
+    }
+  }
+
+  return issues;
 }
 
 /**

@@ -1,4 +1,6 @@
 import type { PluginInput } from "@opencode-ai/plugin";
+import { getState, setState, recoverSession } from "./state.js";
+import * as fs from "fs/promises";
 
 const DEV_INTENT_PATTERN = /^(我要|帮我|我想)?(开发|构建|实现|添加|新增|build|implement|create|add)\s*(.+)/i;
 
@@ -14,6 +16,29 @@ interface SpeckitIntentState {
 const sessionState = new Map<string, SpeckitIntentState>();
 
 const STATE_TTL_MS = 30 * 60 * 1000;
+const INTERVIEW_STATE_PATH = ".spec/.interview-state.json";
+
+async function persistInterviewState(sessionId: string, intent: SpeckitIntentState): Promise<void> {
+  try {
+    await fs.mkdir(".spec", { recursive: true });
+    await fs.writeFile(INTERVIEW_STATE_PATH, JSON.stringify({ sessionId, ...intent }, null, 2), "utf-8");
+  } catch {
+    // Non-critical — interview state persistence is best-effort
+  }
+}
+
+async function initializeWorkflow(sessionId: string): Promise<void> {
+  try {
+    const currentState = await getState();
+    if (currentState.sessionId === sessionId) {
+      await recoverSession(sessionId);
+      return;
+    }
+    await setState({ phase: "constitution", sessionId });
+  } catch {
+    await setState({ phase: "constitution", sessionId });
+  }
+}
 
 function cleanupStaleSessions(): void {
     const now = Date.now();
@@ -101,6 +126,9 @@ export function createSpeckitIntentDetectorHook(ctx: PluginInput): {
             } as SpeckitIntent;
 
             (output.message as Record<string, unknown>)["_workflowMode"] = "spec-start";
+
+            await initializeWorkflow(input.sessionID);
+            await persistInterviewState(input.sessionID, state);
 
             state.triggered = true;
         },
