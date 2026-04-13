@@ -78,6 +78,10 @@
   "templates": {
     // 规范文档模板路径
     "specTemplates": ".opencode/spec-templates",
+    // Agent 指令层
+    "agentInstructions": ".opencode/agent-instructions",
+    // 模板依赖图
+    "templateGuide": ".opencode/spec-templates/TEMPLATE-GUIDE.md",
     // 规范文档列表
     "specList": [
       "01-需求文档",
@@ -92,6 +96,28 @@
       "10-测试策略",
       "11-安全规范",
       "12-性能要求"
+    ],
+    // Agent 阶段指令列表
+    "agentInstructionList": [
+      "00-golden-path",
+      "01-constitution",
+      "02-specify",
+      "03-plan",
+      "04-tasks",
+      "05-implement",
+      "06-complete",
+      "07-phase-gates",
+      "08-traceability-matrix",
+      "09-change-management",
+      "10-delivery-checklist",
+      "11-spec-index",
+      "12-review-protocol",
+      "13-evidence-convention",
+      "14-handoff-format",
+      "15-brownfield-mode",
+      "16-impact-analysis",
+      "17-regression-planning",
+      "tasks-format-spec"
     ]
   },
 

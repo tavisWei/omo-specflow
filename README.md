@@ -5,6 +5,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Workflow: 6 Phases](https://img.shields.io/badge/Workflow-6%20Phases-blue.svg)](.opencode/hooks/omo-specflow/state.ts)
 [![Templates: 12 Docs](https://img.shields.io/badge/Templates-12%20Docs-green.svg)](.opencode/spec-templates/)
+[![Agent Instructions: 19 Files](https://img.shields.io/badge/Agent%20Instructions-19%20Files-orange.svg)](.opencode/agent-instructions/)
+
+> 最终验收手册 | Final Acceptance Manual: [`FINAL-ACCEPTANCE.md`](./FINAL-ACCEPTANCE.md)
 
 ---
 
@@ -35,8 +38,19 @@ OMO-SpecFlow 是一套**规格驱动开发**（Spec-Driven Development）工作�
 │                        Intent Detection Hook                                 │
 │                           意图检测 & 工作流启动                                │
 │  ┌───────────────────────────────────────────────────────────────────────┐  │
-│  │  自动识别开发意图 → 创建 SPEC.md → 进入 Constitution 阶段               │  │
+│  │  自动识别开发意图 → 初始化状态机 → 3 轨道面试 → 进入 Constitution     │  │
 │  │  支持: "我要开发XXX" / "帮我实现XXX" / /spec-start                    │  │
+│  │  轨道: Web 全栈 (10Q) / API 服务 (8Q) / CLI 工具 (8Q)               │  │
+│  └───────────────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────┬───────────────────────────────────────────┘
+                                  │
+┌─────────────────────────────────▼───────────────────────────────────────────┐
+│                      Agent Instruction Layer (NEW)                           │
+│                          Agent 指令层（约束性 Prompt）                        │
+│  ┌───────────────────────────────────────────────────────────────────────┐  │
+│  │  每个阶段有专属指令文件，定义 Agent 的输入/输出/质量标准/完成条件      │  │
+│  │  00-golden-path → 01-constitution → 02-specify → 03-plan →           │  │
+│  │  04-tasks → 05-implement → 06-complete                               │  │
 │  └───────────────────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────┬───────────────────────────────────────────┘
                                   │
@@ -104,24 +118,46 @@ OMO-SpecFlow 是一套**规格驱动开发**（Spec-Driven Development）工作�
 ```
 .opencode/
 ├── commands/
-│   └── spec-start.md           # /spec-start 命令定义
+│   └── spec-start.md           # /spec-start 3 轨道自适应面试
 │
 ├── hooks/
 │   └── omo-specflow/
-│       ├── hook.ts             # 意图检测插件入口
-│       ├── state.ts            # 工作流状态机 (6阶段)
+│       ├── hook.ts             # 意图检测 + 状态机初始化
+│       ├── state.ts            # 工作流状态机 (6阶段 + 质量门控)
 │       ├── task-dispatcher.ts  # Atlas 并行任务调度器
-│       ├── spec-review.ts      # Momus 规格合规审查
+│       ├── spec-review.ts      # Momus 规格合规审查 (真实验证)
 │       └── spec-tracker.ts     # 规格条款追踪器
 │
-├── spec-templates/             # 12 份规格文档模板
+├── agent-instructions/         # Agent 指令层 (NEW)
+│   ├── 00-golden-path.md      # 端到端场景设计 (3 场景)
+│   ├── 01-constitution.md     # Constitution 阶段指令
+│   ├── 02-specify.md          # Specify 阶段指令
+│   ├── 03-plan.md             # Plan 阶段指令
+│   ├── 04-tasks.md            # Tasks 阶段指令
+│   ├── 05-implement.md        # Implement 阶段指令
+│   ├── 06-complete.md         # Complete 阶段指令
+│   ├── 07-phase-gates.md      # 阶段质量门控
+│   ├── 08-traceability-matrix.md # 追踪矩阵规范
+│   ├── 09-change-management.md # 规格变更管理
+│   ├── 10-delivery-checklist.md # 交付检查清单
+│   ├── 11-spec-index.md       # 运行时索引
+│   ├── 12-review-protocol.md  # 审查协议
+│   ├── 13-evidence-convention.md # 证据规范
+│   ├── 14-handoff-format.md   # 交接格式
+│   ├── 15-brownfield-mode.md  # 存量项目迭代模式
+│   ├── 16-impact-analysis.md  # 影响分析模板
+│   ├── 17-regression-planning.md # 回归计划模板
+│   └── tasks-format-spec.md   # TASKS.md 格式规范
+│
+├── spec-templates/             # 12 份约束性 Prompt 模板
+│   ├── TEMPLATE-GUIDE.md      # 模板依赖图 + 使用指南 (NEW)
 │   ├── 01-需求文档.md          # 用户故事 + 验收标准
-│   ├── 02-技术架构.md          # 系统架构设计
+│   ├── 02-技术架构.md          # 系统架构 + 技术选型决策树
 │   ├── 03-接口文档.md          # API 接口定义
 │   ├── 04-设计规范.md          # UI/UX 设计规范
 │   ├── 05-页面流程.md          # 页面流程图
 │   ├── 06-页面功能细节.md       # 页面功能详述
-│   ├── 07-数据库设计.md         # 数据模型设计
+│   ├── 07-数据库设计.md         # 数据模型 + ORM Schema
 │   ├── 08-第三方服务集成.md     # 第三方集成
 │   ├── 09-部署架构.md          # 部署方案
 │   ├── 10-测试策略.md          # 测试计划
@@ -134,6 +170,7 @@ OMO-SpecFlow 是一套**规格驱动开发**（Spec-Driven Development）工作�
 ├── SPEC.md                     # 规格主文档
 ├── TASKS.md                    # 任务清单
 ├── .workflow-state.json        # 工作流状态
+├── .interview-state.json       # 面试状态 (NEW)
 ├── .spec-tracker.json          # 条款追踪状态
 └── .spec-versions/            # 规格版本历史
 ```
@@ -222,6 +259,21 @@ ls -la .opencode/spec-templates/
 
 系统会自动检测开发意图，进入 constitution 阶段。
 
+#### 1.1 运行支撑层 | Execution Support Layer
+
+除了 12 份主规格模板，当前版本还提供多 Agent 稳定执行所需的治理文档：
+
+- `07-phase-gates.md`：阶段放行标准
+- `08-traceability-matrix.md`：需求-任务-证据追踪
+- `09-change-management.md`：规格变更管理
+- `10-delivery-checklist.md`：最终交付检查
+- `12-review-protocol.md`：统一审查协议
+- `13-evidence-convention.md`：证据文件规范
+- `14-handoff-format.md`：多 Agent / 多会话交接格式
+- `15-brownfield-mode.md`：存量项目迭代模式
+- `16-impact-analysis.md`：影响分析模板
+- `17-regression-planning.md`：回归计划模板
+
 #### 2. 启动工作流（显式命令）
 
 使用 `/spec-start` 命令显式启动：
@@ -257,6 +309,55 @@ ls -la .spec/
 # 02-技术架构.md    - 技术架构
 # ...
 ```
+
+---
+
+### 存量项目 / 增量功能开发 | Brownfield / Incremental Development
+
+OMO-SpecFlow 支持从零开始的新项目，也支持在现有项目中开发新功能。你可以用它来迭代已有的代码库。
+
+> OMO-SpecFlow supports both greenfield and brownfield development. Use it to build new features or iterate on existing codebases.
+
+**适用场景 | When to Use:**
+- **新功能** | New Features: 给现有系统加新模块。
+- **重构** | Refactoring: 重新梳理复杂模块的规格并重构。
+- **深度修复** | Complex Fixes: 处理涉及业务逻辑变更的修复任务。
+
+**示例命令 | Example Commands:**
+```bash
+/spec-start 为现有项目添加支付功能
+/spec-start 重构用户认证模块以支持 OAuth2
+/spec-start implement a new analytics dashboard for the current app
+```
+
+**迭代流程 | Iteration Workflow:**
+1. **识别意图** | Intent Detection: 系统发现增量开发需求，加载现有的 `.spec/` 状态。
+2. **更新规格** | Spec Update: 更新 `01-需求文档.md` 里的新需求。同步修改受影响的文档，比如 `03-接口文档.md`。
+3. **管理变更** | Change Management: 使用 `09-change-management.md` 记录规格的变化。
+4. **追加任务** | Incremental Tasks: 在 `TASKS.md` 里加新任务，不会删掉旧任务。
+5. **验证** | Verification: 检查新功能是否符合规格，确保不影响原有的功能。
+
+Brownfield 专属文档：
+- `15-brownfield-mode.md`
+- `16-impact-analysis.md`
+- `17-regression-planning.md`
+
+如涉及 schema 或数据迁移，可额外生成：
+- `.spec/MIGRATION.md`
+
+---
+
+## 最终验收 | Final Acceptance
+
+当前仓库已经通过以下验收基线：
+
+- Bun 可运行
+- `bun test ./.opencode/spec-workflow.tests.ts` 全部通过
+- 12 份核心模板齐全且带元数据
+- 19 份 instruction / governance / brownfield 文档齐全
+- README / config / tests 已同步
+
+详细步骤与结果请见：[`FINAL-ACCEPTANCE.md`](./FINAL-ACCEPTANCE.md)
 
 ---
 
