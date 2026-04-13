@@ -45,6 +45,7 @@ if [ "$INSTALL_MODE" = "global" ]; then
     mkdir -p ~/.config/opencode/skills
     mkdir -p ~/.config/opencode/commands
     mkdir -p ~/.config/opencode/spec-templates
+    mkdir -p ~/.config/opencode/agent-instructions
 
     # 安装 Hook
     echo "⚙️  安装 Hook..."
@@ -59,6 +60,10 @@ if [ "$INSTALL_MODE" = "global" ]; then
     echo "📄 安装规格模板..."
     rm -rf ~/.config/opencode/spec-templates/*
     cp -r "$SCRIPT_DIR/.opencode/spec-templates/"* ~/.config/opencode/spec-templates/
+
+    echo "🧠 安装 Agent 指令层..."
+    rm -rf ~/.config/opencode/agent-instructions/*
+    cp -r "$SCRIPT_DIR/.opencode/agent-instructions/"* ~/.config/opencode/agent-instructions/
 
     echo ""
     echo "✅ 全局安装完成!"
@@ -87,6 +92,7 @@ else
     mkdir -p .opencode/hooks
     mkdir -p .opencode/commands
     mkdir -p .opencode/spec-templates
+    mkdir -p .opencode/agent-instructions
 
     # 安装 Hook
     echo "⚙️  安装 Hook..."
@@ -101,6 +107,10 @@ else
     echo "📄 安装规格模板..."
     rm -rf .opencode/spec-templates/*
     cp -r "$SCRIPT_DIR/.opencode/spec-templates/"* .opencode/spec-templates/
+
+    echo "🧠 安装 Agent 指令层..."
+    rm -rf .opencode/agent-instructions/*
+    cp -r "$SCRIPT_DIR/.opencode/agent-instructions/"* .opencode/agent-instructions/
 
     echo ""
     echo "✅ 项目安装完成!"

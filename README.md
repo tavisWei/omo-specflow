@@ -220,6 +220,10 @@ cp .opencode/commands/spec-start.md ~/.config/opencode/commands/
 
 # 安装模板
 cp -r .opencode/spec-templates/* ~/.config/opencode/spec-templates/
+
+# 安装 Agent 指令层
+mkdir -p ~/.config/opencode/agent-instructions
+cp -r .opencode/agent-instructions/* ~/.config/opencode/agent-instructions/
 ```
 
 #### 项目安装
@@ -241,6 +245,52 @@ git submodule add https://github.com/tavisWei/omo-specflow.git .opencode/omo-spe
 ls -la .opencode/hooks/omo-specflow/
 ls -la .opencode/commands/
 ls -la .opencode/spec-templates/
+ls -la .opencode/agent-instructions/
+```
+
+---
+
+### 更新到最新版本 | Update to Latest Version
+
+#### GitHub 克隆安装用户
+
+如果你是通过 `git clone` 安装的，进入仓库后执行：
+
+```bash
+git pull
+bash install.sh
+```
+
+如果你使用的是项目安装模式：
+
+```bash
+git pull
+bash install.sh --project
+```
+
+#### ZIP 下载用户
+
+如果你是通过 GitHub ZIP 下载安装的：
+
+1. 重新下载最新 ZIP
+2. 替换旧的 `omo-specflow` 目录
+3. 重新执行安装脚本
+
+```bash
+bash install.sh
+```
+
+#### 这次更新包含什么
+
+新版安装脚本除了更新 hooks / commands / spec-templates，还会同步：
+
+- `agent-instructions/`
+
+因此现在标准更新方式就是：
+
+```bash
+git pull
+bash install.sh
 ```
 
 ---
