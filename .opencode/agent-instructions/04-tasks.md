@@ -21,7 +21,9 @@
 2. **补充 QA Scenarios** — 至少 1 个 Agent 可执行的验证场景（含 Tool、Steps、Expected Result）
 3. **验证文件路径** — 确保 `**Files**:` 中的路径合理且不重复
 4. **补充 Spec Refs** — 确保每个任务关联至少 1 个 US/AC 条款
-5. **验证 Category** — 确保 category 与任务复杂度匹配
+5. **补充 Source TODOs** — 确保每个任务关联至少 1 个 `TODO-xxx`
+6. **补充 Integration / Bug Fix / Regression 字段** — 对联调、缺陷修复、回归任务明确记录治理信息
+7. **验证 Category** — 确保 category 与任务复杂度匹配
 
 ### 质量检查
 
@@ -29,6 +31,8 @@
 - 有 Acceptance Criteria
 - 有文件路径
 - 有 spec 条款引用
+- 有 Source TODOs 引用
+- 联调 / Bug 修复 / 回归任务有对应专属字段
 - 有 category 标签
 
 ### 依赖分析
@@ -47,6 +51,10 @@
 - [ ] `**Files**:` 列出 1-3 个具体文件路径
 - [ ] `**Acceptance Criteria**:` 有 ≥2 个 checkbox 条件
 - [ ] `**Spec Refs**:` 关联至少 1 个 US/AC 条款
+- [ ] `**Source TODOs**:` 关联至少 1 个 TODO-xxx
+- [ ] 联调任务包含 `**Integration Validation**:`
+- [ ] 缺陷修复任务包含 `**Bug Fix Trace**:`
+- [ ] 回归任务包含 `**Regression Scope**:`
 - [ ] `**Parallelization**:` 标注了 Blocked By 和 Blocks
 
 ## 完成条件 | Completion Criteria
@@ -78,6 +86,8 @@
 - 如果 Acceptance Criteria 只是“完成实现”，改写为可验证结果。
 - 如果 Files 缺失，先回到 spec 文档补足文件级范围，再继续细化任务。
 - 如果 Spec Refs 过多，优先按故事边界重新拆分任务。
+- 如果缺少 Source TODOs，先回到 `.spec/TODO.md` 补齐桥接映射，再继续细化任务。
+- 如果任务属于联调 / bugfix / regression，但没有专属字段，视为不可执行任务，必须重写。
 - 如果 QA Scenarios 无法自动执行，说明任务定义还不够具体。
 
 ## 输出示例片段 | Output Example Fragment

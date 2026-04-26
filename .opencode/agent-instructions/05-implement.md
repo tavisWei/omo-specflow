@@ -7,6 +7,7 @@
 ## 输入 | Input
 
 - `.spec/TASKS.md`（tasks 阶段细化后的版本）
+- `.spec/TODO.md`（SPEC 到 TASKS 的桥接清单）
 - 所有 spec 文档
 
 ## 输出 | Output
@@ -16,11 +17,15 @@
 
 ## 执行流程 | Execution Flow
 
-### 1. 生成执行计划
+### 1. Orchestrator 入口
+
+使用 `SpecOrchestrator` 作为正式执行入口，读取 `.spec/TASKS.md` 并执行上游 artifact preflight。
+
+### 2. 生成执行计划
 
 调用 `buildExecutionPlan(tasks)` 获取按 Wave 分组的执行计划。
 
-### 2. 按 Wave 分组执行
+### 3. 按 Wave 分组执行
 
 ```
 for each wave in executionPlan.waves:
@@ -30,21 +35,34 @@ for each wave in executionPlan.waves:
     if any task failed → retry or escalate
 ```
 
-### 3. 任务分发
+### 4. 任务分发
 
 调用 `generateDispatchCalls(executionPlan)` 生成每个任务的分发指令：
 - 每个任务分发到对应 category 的 Agent
 - 传递任务描述、文件路径、验收标准
 - 加载指定的 skills
 
-### 4. 任务完成后
+### 5. 任务完成后
 
 每个任务完成后：
 1. 运行任务的 QA Scenarios 验证
 2. 调用 `completeTask(taskId, clauseIds)` 更新 spec-tracker
-3. 标记任务为已完成
+3. 记录任务对应的 `Source TODOs`
+4. 标记任务为已完成
 
-### 5. Wave 完成后
+任务开始执行时：
+- 必须先把 task / todo 跟踪状态更新为 `running`
+
+任务失败时：
+- 必须把 task / todo 跟踪状态更新为 `failed` 或 `blocked`
+- 不允许只在最终成功后才写入 tracker
+
+如果任务类型属于前后端联调 / 缺陷修复 / 回归验证：
+- 联调任务必须填写并执行 `Integration Validation`
+- 缺陷修复任务必须填写并执行 `Bug Fix Trace`
+- 回归任务必须填写并执行 `Regression Scope`
+
+### 6. Wave 完成后
 
 每个 Wave 完成后：
 1. 调用 `preFlightCheck()` 检查整体进度
@@ -75,6 +93,7 @@ for each wave in executionPlan.waves:
 
 - 严格按 Wave 顺序执行，不得跳过上游依赖。
 - 任务执行前先读取其 Spec Refs，对照目标条款实施。
+- 任务执行前先读取其 Source TODOs，确认当前任务对应哪一批 bridge todo。
 - 任务完成后立即记录 evidence，不允许事后补写。
 - 如果单任务失败 3 次，停止继续扩大改动，回到 plan/tasks 阶段修正。
 

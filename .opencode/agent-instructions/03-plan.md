@@ -7,11 +7,18 @@
 ## 输入 | Input
 
 - 所有已生成的 `.spec/` 文档
+- `.spec/TODO.md`（SPEC 到 TASKS 的桥接清单）
 - `.opencode/agent-instructions/tasks-format-spec.md`（TASKS.md 格式规范）
 
 ## 输出 | Output
 
 - `.spec/TASKS.md` — 遵循 tasks-format-spec.md 格式的任务列表
+
+## SPEC → TODO → TASKS 桥接规则
+
+- 先读取 `.spec/TODO.md`，再生成 `.spec/TASKS.md`。
+- 每个 `## Task N` 必须能回溯到至少 1 个 TODO ID。
+- 如果缺少 `.spec/TODO.md`，plan 阶段视为未就绪。
 
 ## 任务分解规则 | Task Decomposition Rules
 
@@ -41,6 +48,9 @@
 
 **最后 Wave（集成）**: 
 - 测试套件
+- 前后端联调
+- 缺陷修复
+- 回归测试
 - 文档更新
 - 配置调整
 
@@ -67,8 +77,9 @@
 2. 识别共享依赖，创建 Wave 1 基础设施任务
 3. 按用户故事创建功能任务，标注依赖关系
 4. 创建集成/测试任务
-5. 为每个任务填写完整的 tasks-format-spec 格式字段
-6. 验证无循环依赖（可调用 `analyzeDependencies()`）
+5. 如适用，显式创建前后端联调任务、缺陷修复任务、回归测试任务
+6. 为每个任务填写完整的 tasks-format-spec 格式字段
+7. 验证无循环依赖（可调用 `analyzeDependencies()`）
 
 ## 质量标准
 
@@ -76,6 +87,7 @@
 - 每个任务有 `**Files**:` 具体文件路径
 - 每个任务有 `**Acceptance Criteria**:` 可验证条件
 - 每个任务有 `**Spec Refs**:` 关联条款
+- 联调 / 缺陷修复 / 回归任务必须在计划阶段就显式建模，不允许隐含在“实现任务”里
 
 ## 完成条件 | Completion Criteria
 

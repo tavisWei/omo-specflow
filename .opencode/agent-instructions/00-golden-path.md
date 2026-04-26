@@ -1,24 +1,44 @@
 # 黄金路径端到端场景 | Golden Path End-to-End Scenarios
 
-> 本文档定义用户从 `/spec-start` 到代码交付的完整流程，包含 3 个具体场景和 6 个阶段的输入/输出契约。
+> 本文档定义用户从 `/spec-start` 到代码交付的完整流程，包含 4 种入口模式、3 个具体场景和 10 个阶段的输入/输出契约。
 
 ---
 
 ## 一、工作流总览 | Workflow Overview
 
 ```
-用户输入 → spec-start 面试 → Constitution → Specify → Plan → Tasks → Implement → Complete
+用户输入 → spec-start 面试 → Discovery → Architecture → Design → Constitution → Specify → Plan → Tasks → Implement → Test → Complete
 ```
 
-### 阶段输入/输出契约 | Phase I/O Contracts
+### 入口模式 | Entry Modes
+
+| 模式 | 适用场景 | 起始切入点 | 最佳实践输出 |
+|---|---|---|---|
+| Greenfield | 从 0 到 1 项目开发 | Discovery | 完整上游文档链 + SPEC + TODO + TASKS |
+| Direct-Spec | 已有明确需求和原型图 | Architecture / Design 对齐 | 快速沉淀 SPEC + TODO + TASKS |
+| Brownfield Feature | 功能迭代 | 影响分析 / 增量 Spec | Delta Spec + Regression Plan + 增量 TODO/TASKS |
+| Bugfix | 修复 BUG | Bug Intake / Root Cause | Bug TODO + 修复任务 + 验证/回归证据 |
+
+### 上游文档链 | Upstream Document Chain
+
+在进入 Constitution 之前，先完成上游文档链，确保需求经过充分调研和设计论证：
 
 | 阶段 Phase | 输入 Input | 输出 Output | 质量门控 Gate |
 |---|---|---|---|
-| constitution | 用户项目描述 + 面试结果 | `.spec/SPEC.md` (Vision/Values/Constraints) | SPEC.md 存在且含 3 章节 |
+| discovery | 用户项目描述 + 面试结果 | `PRD.md` + `COMPETITOR-RESEARCH.md` | PRD 大纲已确认，≥3 竞品分析 |
+| architecture | PRD + 竞品研究 | `ARCHITECTURE.md` | ≥2 候选方案，有推荐方案 |
+| design | PRD + 架构推荐 | `UIUX.md` + `PRODUCT-DESIGN.md` + `.page-coverage.json` | 页面覆盖率 ≥90% |
+
+### 下游 SPEC 阶段 | Downstream SPEC Phases
+
+| 阶段 Phase | 输入 Input | 输出 Output | 质量门控 Gate |
+|---|---|---|---|
+| constitution | 上游文档链产出 | `.spec/SPEC.md` (Vision/Values/Constraints) | SPEC.md 存在且含 3 章节 |
 | specify | Constitution + 项目类型 | 按类型生成 spec 模板文档 | ≥3 个 US-xxx 条款已注册 |
 | plan | 所有 spec 文档 | `.spec/TASKS.md` 初版 | TASKS.md 存在且含 ≥1 任务 |
 | tasks | TASKS.md 初版 | 细化后的 TASKS.md（含 AC/QA/文件路径） | 每任务有 AC + spec 引用 |
-| implement | 细化 TASKS.md + spec 文档 | 实现代码 + spec-tracker 更新 | 覆盖率 ≥80% |
+| implement | 细化 TASKS.md + spec 文档 | 实现代码 + spec-tracker 更新 | 覆盖率 ≥80% + 单元测试证据 |
+| test | 实现代码 + tracker 状态 | 联调 / 缺陷修复 / 回归证据 | 联调通过 + bugfix verified + 回归证据齐全 |
 | complete | 所有代码 + spec 状态 | 最终审查报告 | spec-review 全部通过 |
 
 ### 渐进式模板生成策略 | Progressive Template Strategy
