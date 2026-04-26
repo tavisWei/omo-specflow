@@ -67,6 +67,8 @@
 
 - 每个任务至少 1 个 QA 场景，复杂任务至少 2 个。
 - QA 场景必须写明 Tool、Steps、Expected Result、Evidence。
+- 任何等待步骤都必须声明 timeout / deadline 与超时失败退出机制，禁止无限等待。
+- 任何轮询、重试、循环搜索步骤都必须声明 maxAttempts、maxDuration 或其他显式退出条件，禁止无限循环阻塞。
 - 优先使用可自动执行的命令，不使用“人工查看是否正确”作为标准。
 
 ## 拆分修正规则 | Split Correction Rules
@@ -100,6 +102,8 @@
 **QA Scenarios**:
 Scenario: List todos endpoint works
   Tool: Bash (curl)
+  Timeout: 15000ms
+  Loop Guard: N/A
   Steps:
     1. curl /api/v1/todos
     2. 验证状态码和 JSON 字段

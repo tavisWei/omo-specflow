@@ -33,6 +33,8 @@
 ```
 Scenario: {场景名}
   Tool: Bash ({具体工具})
+  Timeout: {最大等待时间，如 15000ms}
+  Loop Guard: {maxAttempts / maxDuration / 明确退出条件；若不适用写 N/A}
   Steps:
     1. {命令或操作}
     2. {断言}
@@ -89,7 +91,7 @@ Scenario: {场景名}
 | 字段 | 格式 | 说明 |
 |---|---|---|
 | Must NOT do | `**Must NOT do**:` 下的列表 | 明确禁止的操作 |
-| QA Scenarios | `**QA Scenarios**:` 下的代码块 | Agent 可执行的验证场景 |
+| QA Scenarios | `**QA Scenarios**:` 下的代码块 | Agent 可执行的验证场景，且必须包含 Timeout 与 Loop Guard 字段 |
 | References | `**References**:` 下的列表 | 参考文件和行号 |
 
 ### Category 取值 | Category Values
@@ -159,6 +161,8 @@ Scenario: {场景名}
 ```
 Scenario: Build succeeds
   Tool: Bash (bun)
+  Timeout: 120000ms
+  Loop Guard: N/A
   Steps:
     1. bun install
     2. bun run build
@@ -218,6 +222,8 @@ Scenario: Build succeeds
 ```
 Scenario: Registration and login flow
   Tool: Bash (curl + bun)
+  Timeout: 30000ms
+  Loop Guard: N/A
   Steps:
     1. curl -X POST /api/v1/auth/register -d '{"email":"test@test.com","password":"Test1234!"}' → 201
     2. curl -X POST /api/v1/auth/login -d '{"email":"test@test.com","password":"Test1234!"}' → 200 + token
@@ -298,7 +304,7 @@ Scenario: Registration and login flow
 | `**Files**:` 下列表 | （新增字段） | 提取文件路径 |
 | `**Acceptance Criteria**:` | `acceptanceCriteria` | 提取 checkbox 文本 |
 | `**Source TODOs**:` | `todoRefs` | 提取 TODO-xxx 引用 |
-| `**QA Scenarios**:` | （新增字段） | 提取代码块内容 |
+| `**QA Scenarios**:` | （新增字段） | 提取代码块内容（含 Timeout / Loop Guard） |
 | `**Spec Refs**:` | （新增字段） | 逗号分隔提取 |
 | `Blocked By:` | `blockedBy` | 提取 Task ID 列表 |
 | `Blocks:` | `blocks` | 提取 Task ID 列表 |
