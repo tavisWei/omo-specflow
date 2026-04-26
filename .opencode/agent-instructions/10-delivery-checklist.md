@@ -7,6 +7,7 @@
 - 完整 spec 文档集
 - TASKS.md 最终版本
 - QA evidence 文件
+- 联调 / 缺陷修复 / 回归 evidence 文件
 - 覆盖率/审查结果
 - 已知限制说明
 
@@ -15,6 +16,7 @@
 - [ ] 所有 required 文档已生成
 - [ ] 关键条款已被任务覆盖
 - [ ] 关键任务有证据文件
+- [ ] 联调、缺陷修复、回归验证均有证据文件
 - [ ] spec-review 无 blocking issues
 - [ ] README 或使用说明已同步
 

@@ -8,6 +8,7 @@
 User Input
   -> Constitution
   -> User Stories / Acceptance Criteria
+  -> TODO Bridge
   -> Tasks
   -> Implementation
   -> QA Evidence
@@ -19,6 +20,7 @@ User Input
 | 字段 | 说明 |
 |---|---|
 | Clause ID | US-xxx / AC-xxx / FR-xxx |
+| TODO ID | TODO-xxx bridge item |
 | Covered By Task | 由哪些任务实现 |
 | Evidence Path | 对应证据文件 |
 | Status | pending / done / blocked |
@@ -27,6 +29,7 @@ User Input
 ## 3. 最低要求
 
 1. 每个 P0 条款必须映射到至少 1 个任务。
+2. 每个 TODO 必须映射到至少 1 个任务并有可追踪状态。
 2. 每个已完成任务必须至少有 1 个 evidence 文件。
 3. 每个 blocking issue 必须能定位到对应条款或任务。
 
