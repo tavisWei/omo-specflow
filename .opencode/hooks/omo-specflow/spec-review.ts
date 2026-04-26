@@ -769,7 +769,8 @@ export function validateTaskQuality(taskBlock: string): SpecReviewIssue[] {
     });
   }
 
-  if (!taskBlock.includes("**QA Scenarios**:")) {
+  const hasQaScenarios = taskBlock.includes("**QA Scenarios**:");
+  if (!hasQaScenarios) {
     issues.push({
       severity: "warning",
       category: "compliance",
@@ -792,6 +793,30 @@ export function validateTaskQuality(taskBlock: string): SpecReviewIssue[] {
       description: "Task missing Parallelization section",
       suggestion: "Add Can Run In Parallel / Parallel Group / Blocked By / Blocks fields",
     });
+  }
+
+  if (hasQaScenarios) {
+    const hasWaitSignals = /(等待|wait|sleep|delay|until|toHaveURL|toBeVisible|waitFor|poll)/i.test(taskBlock);
+    const hasTimeoutGuard = /(timeout|超时|maxWait|deadline|fail-fast|失败退出|超时退出)/i.test(taskBlock);
+    if (hasWaitSignals && !hasTimeoutGuard) {
+      issues.push({
+        severity: "warning",
+        category: "compliance",
+        description: "Task QA Scenarios mention waits but do not declare any timeout exit",
+        suggestion: "Add Timeout: <ms> (or equivalent deadline) plus the timeout failure behavior so the test cannot wait indefinitely",
+      });
+    }
+
+    const hasLoopSignals = /(轮询|poll|retry|重试|循环|loop|while\s*\(|for\s*\(|repeat|scan)/i.test(taskBlock);
+    const hasLoopGuard = /(maxAttempts|maxRetries|maxIterations|maxDuration|上限|最多|截止|deadline|timeout|超时|退出条件|失败退出|Loop Guard)/i.test(taskBlock);
+    if (hasLoopSignals && !hasLoopGuard) {
+      issues.push({
+        severity: "warning",
+        category: "compliance",
+        description: "Task QA Scenarios mention polling/search/retry loops but do not declare any loop guard",
+        suggestion: "Add Loop Guard: maxAttempts / maxDuration / bounded exit condition so the test cannot block forever in a loop",
+      });
+    }
   }
 
   return issues;

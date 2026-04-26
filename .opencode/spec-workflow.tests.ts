@@ -533,6 +533,8 @@ describe("Spec Review Enhancements (spec-review.ts)", () => {
     expect(content).toContain("Task missing QA Scenarios section");
     expect(content).toContain("Task QA Scenarios do not declare any Evidence path");
     expect(content).toContain("Task missing Parallelization section");
+    expect(content).toContain("Task QA Scenarios mention waits but do not declare any timeout exit");
+    expect(content).toContain("Task QA Scenarios mention polling/search/retry loops but do not declare any loop guard");
   });
 });
 
@@ -579,6 +581,9 @@ describe("Orchestrator Upstream Preflight (orchestrator.ts)", () => {
     expect(content).toContain("export class SpecOrchestrator");
     expect(content).toContain("export interface TaskExecutionAdapter");
     expect(content).toContain("todoIds: task.todoRefs");
+    expect(content).toContain("taskTimeoutMs?: number");
+    expect(content).toContain("readinessTimeoutMs?: number");
+    expect(content).toContain("function withTimeout");
   });
 
   it("orchestrator records pending/running/failed tracker states for todo tracking", async () => {
@@ -610,6 +615,15 @@ describe("Orchestrator Upstream Preflight (orchestrator.ts)", () => {
     expect(content).toContain("artifactPreflightCheck");
     expect(content).toContain("assertUpstreamArtifactsReady");
     expect(content).toContain("Upstream artifact preflight failed");
+  });
+
+  it("wraps adapter waits with timeout guards", async () => {
+    const content = await readRepoFile(`${HOOKS_DIR}/orchestrator.ts`);
+    expect(content).toContain("Task execution adapter readiness check");
+    expect(content).toContain("Task execution (");
+    expect(content).toContain("Parallel task execution (");
+    expect(content).toContain("Orchestration completion callback");
+    expect(content).toContain("timed out after");
   });
 });
 
@@ -820,6 +834,9 @@ describe("Agent Instructions", () => {
     expect(impact).toContain("Impact Analysis");
     const regression = await fs.readFile(path.join(INSTRUCTION_DIR, "17-regression-planning.md"), "utf-8");
     expect(regression).toContain("Regression");
+    expect(regression).toContain("timeout");
+    expect(regression).toContain("无限等待");
+    expect(regression).toContain("无限循环");
   });
 
   it("golden path has 3 scenarios", async () => {
@@ -842,6 +859,8 @@ describe("Agent Instructions", () => {
     const content = await fs.readFile(path.join(INSTRUCTION_DIR, "tasks-format-spec.md"), "utf-8");
     const categoryCount = (content.match(/category:/g) || []).length;
     expect(categoryCount).toBeGreaterThanOrEqual(3);
+    expect(content).toContain("Timeout:");
+    expect(content).toContain("Loop Guard:");
   });
 
   it("includes execution support docs", async () => {
@@ -940,6 +959,14 @@ describe("Template Quality", () => {
     expect(content).toContain("Page Coverage Gaps");
     expect(content).toContain("totalModals");
     expect(content).toContain("uncoveredFeatures");
+  });
+
+  it("testing strategy template requires bounded waits and bounded loops", async () => {
+    const content = await fs.readFile(path.join(TEMPLATE_DIR, "10-测试策略.md"), "utf-8");
+    expect(content).toContain("禁止无限等待");
+    expect(content).toContain("禁止无限循环阻塞");
+    expect(content).toContain("timeout");
+    expect(content).toContain("最大尝试次数");
   });
 
   it("TEMPLATE-GUIDE.md exists with Mermaid graph", async () => {

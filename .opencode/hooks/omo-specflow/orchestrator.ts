@@ -268,6 +268,10 @@ export interface OrchestrationOptions {
   resume?: boolean;
   /** Record results to spec-tracker (default: true) */
   recordToTracker?: boolean;
+  /** Maximum time to wait for a single adapter task/callback (default: 300000) */
+  taskTimeoutMs?: number;
+  /** Maximum time to wait for adapter readiness checks (default: 30000) */
+  readinessTimeoutMs?: number;
   /** Callback for progress updates */
   onProgress?: (event: ProgressEvent) => void;
 }
@@ -291,6 +295,8 @@ export interface ProgressEvent {
 const ORCHESTRATION_STATE_PATH = ".spec/.orchestration-state.json";
 const ORCHESTRATION_LOCK_PATH = ".spec/.orchestration-state.lock";
 const EVIDENCE_DIR = ".sisyphus/evidence";
+const DEFAULT_TASK_TIMEOUT_MS = 300_000;
+const DEFAULT_READINESS_TIMEOUT_MS = 30_000;
 
 // ============================================================================
 // Utility Functions
@@ -367,6 +373,25 @@ async function assertUpstreamArtifactsReady(tasksPath: string): Promise<void> {
 /**
  * Main orchestrator class for task execution.
  */
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, context: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${context} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
+}
+
 export class SpecOrchestrator {
   private dispatcher: SpecTaskDispatcher;
   private adapter: TaskExecutionAdapter;
@@ -387,6 +412,8 @@ export class SpecOrchestrator {
       skipPostVerification: options.skipPostVerification ?? false,
       resume: options.resume ?? true,
       recordToTracker: options.recordToTracker ?? true,
+      taskTimeoutMs: options.taskTimeoutMs ?? DEFAULT_TASK_TIMEOUT_MS,
+      readinessTimeoutMs: options.readinessTimeoutMs ?? DEFAULT_READINESS_TIMEOUT_MS,
       onProgress: options.onProgress,
     };
   }
@@ -576,13 +603,17 @@ export class SpecOrchestrator {
     });
 
     const dispatch = dispatchCalls[0];
-    const result = await this.adapter.executeTask({
-      category: dispatch.category,
-      skills: dispatch.skills,
-      runInBackground: dispatch.runInBackground,
-      prompt: dispatch.prompt,
-      task,
-    });
+    const result = await withTimeout(
+      this.adapter.executeTask({
+        category: dispatch.category,
+        skills: dispatch.skills,
+        runInBackground: dispatch.runInBackground,
+        prompt: dispatch.prompt,
+        task,
+      }),
+      this.options.taskTimeoutMs,
+      `Task execution (${task.id})`
+    );
 
     // Post-execution verification
     if (!this.options.skipPostVerification && result.success) {
@@ -673,7 +704,11 @@ export class SpecOrchestrator {
         };
       });
 
-      const results = await this.adapter.executeParallel!(taskOptions);
+      const results = await withTimeout(
+        this.adapter.executeParallel!(taskOptions),
+        this.options.taskTimeoutMs,
+        `Parallel task execution (${group.groupId})`
+      );
 
       for (let i = 0; i < results.length; i++) {
         const result = results[i];
@@ -762,7 +797,11 @@ export class SpecOrchestrator {
   async run(): Promise<OrchestrationSummary> {
     // Check if adapter is ready
     if (this.adapter.isReady) {
-      const ready = await this.adapter.isReady();
+      const ready = await withTimeout(
+        this.adapter.isReady(),
+        this.options.readinessTimeoutMs,
+        "Task execution adapter readiness check"
+      );
       if (!ready) {
         throw new Error("Task execution adapter is not ready");
       }
@@ -825,7 +864,11 @@ export class SpecOrchestrator {
 
     // Notify adapter
     if (this.adapter.onOrchestrationComplete) {
-      await this.adapter.onOrchestrationComplete(summary);
+      await withTimeout(
+        this.adapter.onOrchestrationComplete(summary),
+        this.options.taskTimeoutMs,
+        "Orchestration completion callback"
+      );
     }
 
     return summary;
