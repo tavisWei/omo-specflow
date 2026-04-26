@@ -56,6 +56,7 @@ export interface ParsedTask {
   qaScenarios: string;
   /** Associated spec clause references (US-xxx, AC-xxx) */
   specRefs: string[];
+  todoRefs: string[];
   evidence: ParsedTaskEvidence;
   handoff: ParsedTaskHandoff;
   traceability: ParsedTaskTraceability;
@@ -75,6 +76,7 @@ export interface ParsedTaskHandoff {
 }
 export interface ParsedTaskTraceability {
   clauseIds: string[];
+  todoIds: string[];
   acceptanceCriteria: string[];
   references: string[];
   files: string[];
@@ -162,12 +164,15 @@ export class SpecTaskDispatcher {
     const taskHeaderPattern = /(?:^|\n)(?:#{1,3}\s+(?:Task|Task\s+#)\s*(\d+[A-Z]?|[A-Z]\d?|F\d+)|(?:^|\n)(?:-\s*\[\s*[xX]\s*\]|-)\s+(\d+[A-Z]?|[A-Z]\d?|F\d+)\.\s*)/gm;
     
     const blocks: string[] = [];
-    let lastIndex = 0;
-    let match;
+    let match: RegExpExecArray | null = null;
     
     // Find all task headers
     const headers: Array<{ index: number; id: string }> = [];
-    while ((match = taskHeaderPattern.exec(content)) !== null) {
+    while (true) {
+      match = taskHeaderPattern.exec(content);
+      if (!match) {
+        break;
+      }
       const id = match[1] || match[2];
       if (id) {
         headers.push({ index: match.index, id });
@@ -221,7 +226,7 @@ export class SpecTaskDispatcher {
     const wave = waveMatch ? parseInt(waveMatch[1], 10) : undefined;
     
     // Extract acceptance criteria
-    const acceptanceCriteria = this.extractSection(block, "Acceptance Criteria", "QA Scenarios");
+    const acceptanceCriteria = this.extractChecklistSection(block, "Acceptance Criteria");
     
     // Extract references
     const references = this.extractReferences(block);
@@ -229,10 +234,12 @@ export class SpecTaskDispatcher {
     const files = this.extractFiles(block);
     const qaScenarios = this.extractSection(block, "QA Scenarios");
     const specRefs = this.extractSpecRefs(block);
+    const todoRefs = this.extractTodoRefs(block);
     const evidence = this.buildEvidenceInfo(block, id);
     const handoff = this.buildHandoffInfo(block, wave, blockedBy, blocks, references, files);
     const traceability: ParsedTaskTraceability = {
       clauseIds: specRefs,
+      todoIds: todoRefs,
       acceptanceCriteria,
       references,
       files,
@@ -254,6 +261,7 @@ export class SpecTaskDispatcher {
       files,
       qaScenarios,
       specRefs,
+      todoRefs,
       evidence,
       handoff,
       traceability,
@@ -353,13 +361,13 @@ export class SpecTaskDispatcher {
    */
   private extractCategory(block: string): TaskCategory {
     const categoryPatterns: Array<{ pattern: RegExp; category: TaskCategory }> = [
-      [/category["\s:]+["']?(?:quick)["']?/i, "quick"],
-      [/category["\s:]+["']?(?:deep)["']?/i, "deep"],
-      [/category["\s:]+["']?(?:writing)["']?/i, "writing"],
-      [/category["\s:]+["']?(?:visual-engineering)["']?/i, "visual-engineering"],
-      [/category["\s:]+["']?(?:unspecified-high)["']?/i, "unspecified-high"],
-      [/category["\s:]+["']?(?:unspecified-low)["']?/i, "unspecified-low"],
-      [/category["\s:]+["']?(?:ultrabrain)["']?/i, "ultrabrain"],
+      { pattern: /category["\s:]+["']?(?:quick)["']?/i, category: "quick" },
+      { pattern: /category["\s:]+["']?(?:deep)["']?/i, category: "deep" },
+      { pattern: /category["\s:]+["']?(?:writing)["']?/i, category: "writing" },
+      { pattern: /category["\s:]+["']?(?:visual-engineering)["']?/i, category: "visual-engineering" },
+      { pattern: /category["\s:]+["']?(?:unspecified-high)["']?/i, category: "unspecified-high" },
+      { pattern: /category["\s:]+["']?(?:unspecified-low)["']?/i, category: "unspecified-low" },
+      { pattern: /category["\s:]+["']?(?:ultrabrain)["']?/i, category: "ultrabrain" },
     ];
     
     for (const { pattern, category } of categoryPatterns) {
@@ -484,6 +492,31 @@ export class SpecTaskDispatcher {
     }
     const refs = refsLine[1].match(/(US-\d+|AC-\d+(?:\.\d+)?|FR-\d+|NFR-\d+|REQ-\d+)/gi);
     return refs ? [...new Set(refs.map((r) => r.toUpperCase()))] : [];
+  }
+
+  private extractTodoRefs(block: string): string[] {
+    const refsLine = block.match(/\*\*(?:Source TODOs?|TODO Refs?)\*\*:\s*(.+)/i);
+    if (!refsLine) {
+      const matches = block.match(/TODO-\d+/gi);
+      return matches ? [...new Set(matches.map((m) => m.toUpperCase()))] : [];
+    }
+    const refs = refsLine[1].match(/TODO-\d+/gi);
+    return refs ? [...new Set(refs.map((r) => r.toUpperCase()))] : [];
+  }
+
+  private extractChecklistSection(block: string, sectionName: string): string[] {
+    const section = this.extractSection(block, sectionName);
+    if (!section) {
+      return [];
+    }
+
+    return this.dedupe(
+      section
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => /^-\s*\[[ xX]\]/.test(line))
+        .map((line) => line.replace(/^-\s*\[[ xX]\]\s*/, "").trim())
+    );
   }
 
   /**
@@ -700,7 +733,7 @@ export class SpecTaskDispatcher {
     const taskList = tasks
       .map(
         (task, index) =>
-          `### Task ${task.id}: ${task.title}\n\n${task.description.slice(0, 500)}${task.description.length > 500 ? "..." : ""}\n\n**Category**: ${task.category}\n**Skills**: ${task.skills.join(", ") || "none"}\n\n**Traceability**:\n- Spec Refs: ${task.traceability.clauseIds.join(", ") || "none"}\n- Files: ${task.traceability.files.join(", ") || "none"}\n- References: ${task.traceability.references.join(", ") || "none"}\n\n**Evidence**:\n- Required artifacts: at least ${task.evidence.minimumCount}\n- Explicit paths: ${task.evidence.paths.join(", ") || "none provided"}\n- Default convention: ${task.evidence.convention}\n\n**Handoff**:\n- Current phase: ${task.handoff.currentPhase || "unspecified"}\n- Pending: ${task.handoff.pending.join(", ") || "none"}\n- Blocked By: ${task.handoff.blockedBy.join(", ") || "none"}\n- Key Docs: ${task.handoff.keyDocs.join(", ") || "none"}\n- Next Recommended Action: ${task.handoff.nextRecommendedAction || "none"}\n\n**Acceptance Criteria**:\n${task.acceptanceCriteria.map((ac) => `- ${ac}`).join("\n")}`
+          `### Task ${task.id}: ${task.title}\n\n${task.description.slice(0, 500)}${task.description.length > 500 ? "..." : ""}\n\n**Category**: ${task.category}\n**Skills**: ${task.skills.join(", ") || "none"}\n\n**Traceability**:\n- Spec Refs: ${task.traceability.clauseIds.join(", ") || "none"}\n- Source TODOs: ${task.traceability.todoIds.join(", ") || "none"}\n- Files: ${task.traceability.files.join(", ") || "none"}\n- References: ${task.traceability.references.join(", ") || "none"}\n\n**Evidence**:\n- Required artifacts: at least ${task.evidence.minimumCount}\n- Explicit paths: ${task.evidence.paths.join(", ") || "none provided"}\n- Default convention: ${task.evidence.convention}\n\n**Handoff**:\n- Current phase: ${task.handoff.currentPhase || "unspecified"}\n- Pending: ${task.handoff.pending.join(", ") || "none"}\n- Blocked By: ${task.handoff.blockedBy.join(", ") || "none"}\n- Key Docs: ${task.handoff.keyDocs.join(", ") || "none"}\n- Next Recommended Action: ${task.handoff.nextRecommendedAction || "none"}\n\n**Acceptance Criteria**:\n${task.acceptanceCriteria.map((ac) => `- ${ac}`).join("\n")}`
       )
       .join("\n\n---\n\n");
     
@@ -832,6 +865,9 @@ export function validateParsedTask(task: ParsedTask): string[] {
   }
   if (!task.specRefs || task.specRefs.length === 0) {
     missing.push("Spec Refs");
+  }
+  if (!task.todoRefs || task.todoRefs.length === 0) {
+    missing.push("Source TODOs");
   }
   if (!task.category) {
     missing.push("category");

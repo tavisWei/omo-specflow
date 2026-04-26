@@ -6,6 +6,11 @@ import {
   generateCoverageReport,
   type SpecCoverageReport,
 } from "./spec-tracker.js";
+import {
+  generateArtifactCoverageReport,
+  artifactIssuesToReviewIssues,
+  artifactPreflightCheck,
+} from "./artifact-coverage.js";
 
 const EVIDENCE_DIR = ".sisyphus/evidence";
 const README_CANDIDATES = ["README.md", "README.zh-CN.md", "README.cn.md", "USAGE.md"] as const;
@@ -145,11 +150,23 @@ function extractFilesList(taskBlock: string): string[] {
     .filter((line) => line.startsWith("- "));
 }
 
+function extractTodoRefs(taskBlock: string): string[] {
+  return [...new Set((taskBlock.match(/TODO-\d+/gi) || []).map((match) => match.toUpperCase()))];
+}
+
+function parseTodoBridge(content: string): string[] {
+  return content
+    .split("\n")
+    .filter((line) => /^\|\s*TODO-\d+/i.test(line))
+    .map((line) => line.split("|")[1]?.trim().toUpperCase() ?? "")
+    .filter((value) => value.length > 0);
+}
+
 async function findReadmeLikeFiles(): Promise<string[]> {
   const existing = await Promise.all(
     README_CANDIDATES.map(async (candidate) => ((await pathExists(candidate)) ? candidate : null))
   );
-  return existing.filter((file): file is string => !!file);
+  return existing.filter((file): file is (typeof README_CANDIDATES)[number] => file !== null);
 }
 
 async function readTrackerStateSafe(): Promise<Awaited<ReturnType<typeof getState>> | null> {
@@ -232,8 +249,12 @@ function extractTaskRefs(content: string): Array<{
     if (match) {
       const description = match[1].trim();
       const refs: string[] = [];
-      let refMatch;
-      while ((refMatch = clauseRefPattern.exec(description)) !== null) {
+      let refMatch: RegExpExecArray | null = null;
+      while (true) {
+        refMatch = clauseRefPattern.exec(description);
+        if (!refMatch) {
+          break;
+        }
         refs.push(refMatch[1].toUpperCase());
       }
       // Generate a task ID from the description
@@ -313,8 +334,12 @@ export async function preExecutionVerify(taskDescription: string): Promise<PreEx
   // Extract clause references from task description
   const clauseRefPattern = /(US-\d+|AC-\d+(?:\.\d+)?)/gi;
   const refs: string[] = [];
-  let match;
-  while ((match = clauseRefPattern.exec(taskDescription)) !== null) {
+  let match: RegExpExecArray | null = null;
+  while (true) {
+    match = clauseRefPattern.exec(taskDescription);
+    if (!match) {
+      break;
+    }
     refs.push(match[1].toUpperCase());
   }
 
@@ -365,8 +390,12 @@ export async function postCompletionVerify(
   // Extract clause references from task description
   const clauseRefPattern = /(US-\d+|AC-\d+(?:\.\d+)?)/gi;
   const refs: string[] = [];
-  let match;
-  while ((match = clauseRefPattern.exec(taskDescription)) !== null) {
+  let match: RegExpExecArray | null = null;
+  while (true) {
+    match = clauseRefPattern.exec(taskDescription);
+    if (!match) {
+      break;
+    }
     refs.push(match[1].toUpperCase());
   }
 
@@ -551,11 +580,19 @@ export async function performSpecReview(planPath?: string): Promise<SpecReviewRe
   const evidenceIssues = await checkEvidenceTraceability(tasksContent, specClauses);
   issues.push(...evidenceIssues);
 
+  const todoBridgeIssues = await checkTodoBridgeReadiness(tasksContent);
+  issues.push(...todoBridgeIssues);
+
   const deliveryIssues = await checkDeliveryReadiness();
   issues.push(...deliveryIssues);
 
   const changeManagementIssues = await checkChangeManagementReadiness();
   issues.push(...changeManagementIssues);
+
+  // Check upstream artifact coverage
+  const artifactReport = await generateArtifactCoverageReport("web", specDir);
+  const artifactIssues = artifactIssuesToReviewIssues(artifactReport);
+  issues.push(...artifactIssues);
 
   const taskBlocks = parseTaskBlocks(tasksContent);
   for (let i = 0; i < taskBlocks.length; i++) {
@@ -714,6 +751,15 @@ export function validateTaskQuality(taskBlock: string): SpecReviewIssue[] {
     });
   }
 
+  if (extractTodoRefs(taskBlock).length === 0) {
+    issues.push({
+      severity: "warning",
+      category: "reference",
+      description: "Task has no Source TODO references (TODO-xxx)",
+      suggestion: "Add **Source TODOs**: TODO-001 so task execution can be traced back to the bridge todo list",
+    });
+  }
+
   if (!taskBlock.includes("category:")) {
     issues.push({
       severity: "warning",
@@ -838,6 +884,57 @@ async function checkEvidenceTraceability(
   return issues;
 }
 
+async function checkTodoBridgeReadiness(tasksContent: string): Promise<SpecReviewIssue[]> {
+  const issues: SpecReviewIssue[] = [];
+  const todoContent = await readFileSafe(".spec/TODO.md");
+
+  if (!todoContent) {
+    issues.push({
+      severity: "blocking",
+      category: "completeness",
+      description: "TODO.md not found - spec-to-task bridge is missing",
+      suggestion: "Generate .spec/TODO.md before finalizing TASKS.md",
+    });
+    return issues;
+  }
+
+  const todoIds = new Set(parseTodoBridge(todoContent));
+  if (todoIds.size === 0) {
+    issues.push({
+      severity: "blocking",
+      category: "completeness",
+      description: "TODO.md has no TODO rows",
+      suggestion: "Populate TODO.md with TODO-xxx bridge items before task execution",
+    });
+  }
+
+  const taskBlocks = parseTaskBlocks(tasksContent);
+  for (const task of taskBlocks) {
+    const taskTodoRefs = extractTodoRefs(task.block);
+    if (taskTodoRefs.length === 0) {
+      issues.push({
+        severity: "blocking",
+        category: "reference",
+        description: `Task ${task.taskNumber} is missing Source TODO references`,
+        suggestion: "Add **Source TODOs**: TODO-001 (or equivalent) to the task block",
+      });
+      continue;
+    }
+
+    const invalidRefs = taskTodoRefs.filter((todoId) => !todoIds.has(todoId));
+    if (invalidRefs.length > 0) {
+      issues.push({
+        severity: "blocking",
+        category: "reference",
+        description: `Task ${task.taskNumber} references TODO IDs missing from TODO.md: ${invalidRefs.join(", ")}`,
+        suggestion: "Keep TODO.md and TASKS.md synchronized so tasks can be traced to bridge todos",
+      });
+    }
+  }
+
+  return issues;
+}
+
 async function checkDeliveryReadiness(): Promise<SpecReviewIssue[]> {
   const issues: SpecReviewIssue[] = [];
   const readmeFiles = await findReadmeLikeFiles();
@@ -862,7 +959,7 @@ async function checkDeliveryReadiness(): Promise<SpecReviewIssue[]> {
   }
 
   const evidenceFiles = await fs.readdir(EVIDENCE_DIR);
-  const finalReviewEvidence = evidenceFiles.find((file) => /final-review|review-summary/i.test(file));
+  const finalReviewEvidence = evidenceFiles.find((file: string) => /final-review|review-summary/i.test(file));
   if (!finalReviewEvidence) {
     issues.push({
       severity: "warning",
@@ -955,9 +1052,13 @@ async function checkTemplateCompleteness(specDir: string): Promise<SpecReviewIss
 async function checkFileReferences(tasksContent: string): Promise<SpecReviewIssue[]> {
   const issues: SpecReviewIssue[] = [];
   const filePathPattern = /`([a-zA-Z0-9_./-]+\.[a-zA-Z]{1,5})`/g;
-  let match;
+  let match: RegExpExecArray | null = null;
 
-  while ((match = filePathPattern.exec(tasksContent)) !== null) {
+  while (true) {
+    match = filePathPattern.exec(tasksContent);
+    if (!match) {
+      break;
+    }
     const filePath = match[1];
     if (filePath.startsWith(".spec/") || filePath.startsWith(".sisyphus/")) continue;
     if (filePath.includes("*") || filePath.includes("...")) continue;
@@ -1027,6 +1128,10 @@ export async function preFlightCheck(): Promise<{
         ? `${incomplete.length} clauses still incomplete`
         : "All tracked clauses are complete",
   });
+
+  // Check upstream artifact readiness
+  const artifactReadiness = await artifactPreflightCheck("web");
+  checks.push(...artifactReadiness.checks);
 
   return {
     ready: checks.every((c) => c.passed),

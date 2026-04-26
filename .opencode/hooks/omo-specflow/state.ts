@@ -1,6 +1,6 @@
 import * as fs from "fs/promises";
 import * as path from "path";
-import { generateCoverageReport, getState as getTrackerState } from "./spec-tracker.js";
+import { generateCoverageReport, getBugFixSummary, getState as getTrackerState } from "./spec-tracker.js";
 import { performSpecReview } from "./spec-review.js";
 
 const EVIDENCE_DIR = ".sisyphus/evidence";
@@ -11,15 +11,37 @@ interface TaskGateBlock {
   block: string;
 }
 
+interface TodoBridgeItem {
+  todoId: string;
+  source: string;
+  scope: string;
+  priority: string;
+  notes: string;
+}
+
+function isExecutionLifecycleStatus(status: unknown): status is "pending" | "running" | "failed" | "done" | "blocked" {
+  return status === "pending"
+    || status === "running"
+    || status === "failed"
+    || status === "done"
+    || status === "blocked";
+}
+
 /**
  * Workflow phases in order
+ * Upstream phases: discovery → architecture → design → constitution
+ * Downstream phases: specify → plan → tasks → implement → test → complete
  */
 export const WORKFLOW_PHASES = [
+  "discovery",
+  "architecture",
+  "design",
   "constitution",
   "specify",
   "plan",
   "tasks",
   "implement",
+  "test",
   "complete",
 ] as const;
 
@@ -29,11 +51,15 @@ export type WorkflowPhase = (typeof WORKFLOW_PHASES)[number];
  * Phase transition map - defines valid next phases from each phase
  */
 const PHASE_TRANSITIONS: Record<WorkflowPhase, WorkflowPhase[] | "terminal"> = {
+  discovery: ["architecture"],
+  architecture: ["design"],
+  design: ["constitution"],
   constitution: ["specify"],
   specify: ["plan"],
   plan: ["tasks"],
   tasks: ["implement"],
-  implement: ["complete"],
+  implement: ["test"],
+  test: ["complete"],
   complete: "terminal",
 };
 
@@ -59,7 +85,7 @@ export interface SpecWorkflowState {
  * Default initial state
  */
 const DEFAULT_STATE: SpecWorkflowState = {
-  phase: "constitution",
+  phase: "discovery",
   phaseCompleted: false,
   initializedAt: Date.now(),
   phaseStartedAt: Date.now(),
@@ -204,11 +230,165 @@ function extractEvidencePaths(content: string): string[] {
   return [...new Set(matches.map((match) => match[1].trim()))];
 }
 
+function extractTodoRefs(content: string): string[] {
+  return [...new Set((content.match(/TODO-\d+/gi) || []).map((match) => match.toUpperCase()))];
+}
+
+function parseTodoBridge(content: string): TodoBridgeItem[] {
+  const lines = content.split("\n");
+  return lines
+    .filter((line) => /^\|\s*TODO-\d+/i.test(line))
+    .map((line) => {
+      const parts = line.split("|").map((part) => part.trim()).filter(Boolean);
+      return {
+        todoId: (parts[0] || "").toUpperCase(),
+        source: parts[1] || "",
+        scope: parts[2] || "",
+        priority: parts[3] || "",
+        notes: parts[4] || "",
+      };
+    })
+    .filter((item) => item.todoId.length > 0);
+}
+
+function hasTaskSection(content: string, sectionTitle: string): boolean {
+  const normalized = sectionTitle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`\\*\\*${normalized}\\*\\*:`, "i");
+  return pattern.test(content);
+}
+
+function hasTaskKeyword(content: string, keywords: string[]): boolean {
+  return keywords.some((keyword) => new RegExp(keyword, "i").test(content));
+}
+
 async function getExistingReadmeFiles(): Promise<string[]> {
   const existing = await Promise.all(
     README_CANDIDATES.map(async (candidate) => ((await pathExists(candidate)) ? candidate : null))
   );
-  return existing.filter((file): file is string => !!file);
+  return existing.filter((file): file is (typeof README_CANDIDATES)[number] => file !== null);
+}
+
+async function getConfiguredTodoIds(specDir: string): Promise<Set<string>> {
+  try {
+    const todoContent = await fs.readFile(path.join(specDir, "TODO.md"), "utf-8");
+    return new Set(parseTodoBridge(todoContent).map((item) => item.todoId));
+  } catch {
+    return new Set<string>();
+  }
+}
+
+async function getEvidenceFiles(): Promise<string[]> {
+  if (!(await pathExists(EVIDENCE_DIR))) {
+    return [];
+  }
+  return fs.readdir(EVIDENCE_DIR);
+}
+
+function hasEvidenceMatch(evidenceFiles: string[], patterns: RegExp[]): boolean {
+  return evidenceFiles.some((file) => patterns.some((pattern) => pattern.test(file)));
+}
+
+function countHeadings(content: string): number {
+  return (content.match(/^#{1,3}\s+/gm) || []).length;
+}
+
+function hasEvidenceSignals(content: string): boolean {
+  return /https?:\/\//i.test(content)
+    || /\|[^\n]+\|/.test(content)
+    || /\[[^\]]+\]\([^)]+\)/.test(content)
+    || /Stars?|GitHub|Repo/i.test(content);
+}
+
+function hasStructuredCompetitorEntries(content: string): boolean {
+  const sectionMatches = content.match(/^##\s+/gm) || [];
+  const bulletMatches = content.match(/^-\s+/gm) || [];
+  const tableRows = content.match(/^\|.+\|$/gm) || [];
+  return sectionMatches.length >= 3 || bulletMatches.length >= 3 || tableRows.length >= 4;
+}
+
+function hasArchitectureMarkers(content: string): boolean {
+  return /mermaid|graph\s+TD|flowchart|sequenceDiagram/i.test(content)
+    || /目录结构|Directory Structure|模块划分|Modules?/i.test(content);
+}
+
+function hasRecommendation(content: string): boolean {
+  return /推荐方案|Recommended|Recommendation|推荐结论/i.test(content);
+}
+
+function countCandidateSections(content: string): number {
+  const matches = content.match(/^(?:##|###)\s+.*(?:方案|Candidate|Option)/gim) || [];
+  return matches.length;
+}
+
+function parsePageCoverage(content: string): { percent?: number; totalPages?: number; coveredPages?: number } | null {
+  try {
+    const data = JSON.parse(content) as {
+      coveragePercent?: number;
+      coverage?: number;
+      percent?: number;
+      totalPages?: number;
+      coveredPages?: number;
+      uncoveredPages?: string[];
+    };
+
+    const explicitPercent = [data.coveragePercent, data.coverage, data.percent].find(
+      (value): value is number => typeof value === "number" && Number.isFinite(value)
+    );
+    if (typeof explicitPercent === "number") {
+      return {
+        percent: explicitPercent,
+        totalPages: data.totalPages,
+        coveredPages: data.coveredPages,
+      };
+    }
+
+    if (
+      typeof data.totalPages === "number"
+      && Number.isFinite(data.totalPages)
+      && data.totalPages > 0
+    ) {
+      const coveredPages = typeof data.coveredPages === "number"
+        ? data.coveredPages
+        : data.totalPages - (data.uncoveredPages?.length ?? 0);
+      return {
+        percent: (coveredPages / data.totalPages) * 100,
+        totalPages: data.totalPages,
+        coveredPages,
+      };
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function hasPageTransitionMatrix(content: string): boolean {
+  return /页面跳转矩阵|Page Transition Matrix/i.test(content);
+}
+
+function hasPageRelationTree(content: string): boolean {
+  return /页面关系树|Page Relation Tree/i.test(content);
+}
+
+function hasModalInventory(content: string): boolean {
+  return /模态框清单|Modal Inventory/i.test(content);
+}
+
+function hasPageCountSummary(content: string): boolean {
+  return /页面总数|Total Pages/i.test(content) && /弹窗总数|Total Modals/i.test(content);
+}
+
+function hasLogicalArchitecture(content: string): boolean {
+  return /逻辑架构|Logical Architecture/i.test(content);
+}
+
+function hasTechnicalArchitecture(content: string): boolean {
+  return /技术架构|Technical Architecture/i.test(content);
+}
+
+function hasPageCoverageGaps(content: string): boolean {
+  return /页面功能缺口|Page Coverage Gaps/i.test(content);
 }
 
 /**
@@ -314,6 +494,122 @@ const PHASE_COMPLETION_CHECKS: Record<WorkflowPhase, (specDir: string) => Promis
     return { valid: errors.length === 0, errors };
   },
 
+  discovery: async (specDir) => {
+    const errors: string[] = [];
+    const workflowState = await getState();
+    const discoveryMetadata = workflowState.metadata?.discovery;
+    const prdPath = path.join(specDir, "PRD.md");
+    try {
+      const content = await fs.readFile(prdPath, "utf-8");
+      if (countHeadings(content) < 3) {
+        errors.push("PRD.md must contain at least 3 section headings");
+      }
+    } catch {
+      errors.push("PRD.md not found at " + prdPath);
+    }
+    const researchPath = path.join(specDir, "COMPETITOR-RESEARCH.md");
+    try {
+      const content = await fs.readFile(researchPath, "utf-8");
+      if (!hasStructuredCompetitorEntries(content)) {
+        errors.push("COMPETITOR-RESEARCH.md must contain at least 3 structured competitor entries");
+      }
+      if (!hasEvidenceSignals(content)) {
+        errors.push("COMPETITOR-RESEARCH.md must include evidence signals such as URLs, citations, or comparison tables");
+      }
+    } catch {
+      errors.push("COMPETITOR-RESEARCH.md not found at " + researchPath);
+    }
+    if (!discoveryMetadata?.outlineConfirmed) {
+      errors.push("Discovery metadata must confirm outlineConfirmed before leaving outline-first PRD mode");
+    }
+    if (discoveryMetadata?.prdStatus === "outline") {
+      errors.push("Discovery metadata indicates PRD is still in outline mode");
+    }
+    return { valid: errors.length === 0, errors };
+  },
+
+  architecture: async (specDir) => {
+    const errors: string[] = [];
+    const archPath = path.join(specDir, "ARCHITECTURE.md");
+    try {
+      const content = await fs.readFile(archPath, "utf-8");
+      if (countHeadings(content) < 3) {
+        errors.push("ARCHITECTURE.md must contain at least 3 section headings");
+      }
+      if (countCandidateSections(content) < 2) {
+        errors.push("ARCHITECTURE.md must document at least 2 candidate sections");
+      }
+      if (!hasRecommendation(content)) {
+        errors.push("ARCHITECTURE.md must include a recommended architecture section");
+      }
+      if (!hasArchitectureMarkers(content)) {
+        errors.push("ARCHITECTURE.md must include architecture markers such as a diagram or structure description");
+      }
+      if (!hasLogicalArchitecture(content)) {
+        errors.push("ARCHITECTURE.md must include a logical architecture section");
+      }
+      if (!hasTechnicalArchitecture(content)) {
+        errors.push("ARCHITECTURE.md must include a technical architecture section");
+      }
+    } catch {
+      errors.push("ARCHITECTURE.md not found at " + archPath);
+    }
+    return { valid: errors.length === 0, errors };
+  },
+
+  design: async (specDir) => {
+    const errors: string[] = [];
+    const uiuxPath = path.join(specDir, "UIUX.md");
+    try {
+      const uiuxContent = await fs.readFile(uiuxPath, "utf-8");
+      if (countHeadings(uiuxContent) < 3) {
+        errors.push("UIUX.md must contain at least 3 meaningful section headings");
+      }
+      if (!hasPageRelationTree(uiuxContent)) {
+        errors.push("UIUX.md must include a page relation tree section");
+      }
+      if (!hasPageTransitionMatrix(uiuxContent)) {
+        errors.push("UIUX.md must include a page transition matrix section");
+      }
+      if (!hasModalInventory(uiuxContent)) {
+        errors.push("UIUX.md must include a modal inventory section");
+      }
+      if (!hasPageCountSummary(uiuxContent)) {
+        errors.push("UIUX.md must include total page and modal counts");
+      }
+    } catch {
+      errors.push("UIUX.md not found at " + uiuxPath);
+    }
+    const productDesignPath = path.join(specDir, "PRODUCT-DESIGN.md");
+    try {
+      const productDesignContent = await fs.readFile(productDesignPath, "utf-8");
+      if (countHeadings(productDesignContent) < 3) {
+        errors.push("PRODUCT-DESIGN.md must contain at least 3 meaningful section headings");
+      }
+      if (!hasPageCoverageGaps(productDesignContent)) {
+        errors.push("PRODUCT-DESIGN.md must include a page coverage gaps section");
+      }
+      if (!hasPageTransitionMatrix(productDesignContent) && !/页面跳转详情|Page Transition Details/i.test(productDesignContent)) {
+        errors.push("PRODUCT-DESIGN.md must include page transition details");
+      }
+    } catch {
+      errors.push("PRODUCT-DESIGN.md not found at " + productDesignPath);
+    }
+    const coveragePath = path.join(specDir, ".page-coverage.json");
+    try {
+      const coverageContent = await fs.readFile(coveragePath, "utf-8");
+      const coverage = parsePageCoverage(coverageContent);
+      if (!coverage || typeof coverage.percent !== "number") {
+        errors.push(".page-coverage.json must include a parseable coverage percentage or total/covered page counts");
+      } else if (coverage.percent < 90) {
+        errors.push(`.page-coverage.json coverage is ${coverage.percent.toFixed(1)}% (minimum 90% required)`);
+      }
+    } catch {
+      errors.push(".page-coverage.json not found at " + coveragePath);
+    }
+    return { valid: errors.length === 0, errors };
+  },
+
   specify: async (_specDir) => {
     const errors: string[] = [];
     try {
@@ -330,6 +626,16 @@ const PHASE_COMPLETION_CHECKS: Record<WorkflowPhase, (specDir: string) => Promis
   plan: async (specDir) => {
     const errors: string[] = [];
     const tasksPath = path.join(specDir, "TASKS.md");
+    const todoPath = path.join(specDir, "TODO.md");
+    try {
+      const todoContent = await fs.readFile(todoPath, "utf-8");
+      const todoItems = parseTodoBridge(todoContent);
+      if (todoItems.length === 0) {
+        errors.push("TODO.md must contain at least 1 TODO row (| TODO-001 | ...) before generating TASKS.md");
+      }
+    } catch {
+      errors.push("TODO.md not found at " + todoPath);
+    }
     try {
       const content = await fs.readFile(tasksPath, "utf-8");
       const taskMatches = content.match(/^## Task \d+/gm);
@@ -345,6 +651,18 @@ const PHASE_COMPLETION_CHECKS: Record<WorkflowPhase, (specDir: string) => Promis
   tasks: async (specDir) => {
     const errors: string[] = [];
     const tasksPath = path.join(specDir, "TASKS.md");
+    const todoPath = path.join(specDir, "TODO.md");
+    let todoIds = new Set<string>();
+    const referencedTodoIds = new Set<string>();
+    try {
+      const todoContent = await fs.readFile(todoPath, "utf-8");
+      todoIds = new Set(parseTodoBridge(todoContent).map((item) => item.todoId));
+      if (todoIds.size === 0) {
+        errors.push("TODO.md must contain at least 1 TODO row before task refinement");
+      }
+    } catch {
+      errors.push("TODO.md not found at " + todoPath);
+    }
     try {
       const content = await fs.readFile(tasksPath, "utf-8");
       const taskBlocks = parseTaskBlocks(content);
@@ -365,6 +683,35 @@ const PHASE_COMPLETION_CHECKS: Record<WorkflowPhase, (specDir: string) => Promis
         if (extractEvidencePaths(block).length === 0) {
           errors.push(`Task ${taskBlocks[i].taskNumber} missing Evidence path for verification traceability`);
         }
+        const taskTodoRefs = extractTodoRefs(block);
+        if (taskTodoRefs.length === 0) {
+          errors.push(`Task ${taskBlocks[i].taskNumber} missing Source TODO references`);
+        }
+        taskTodoRefs.forEach((todoId) => referencedTodoIds.add(todoId));
+        const invalidTodoRefs = taskTodoRefs.filter((todoId) => !todoIds.has(todoId));
+        if (invalidTodoRefs.length > 0) {
+          errors.push(`Task ${taskBlocks[i].taskNumber} references TODO IDs missing from TODO.md: ${invalidTodoRefs.join(", ")}`);
+        }
+
+        const isIntegrationTask = hasTaskKeyword(block, ["联调", "integration", "frontend-backend", "front-end/back-end", "api contract"]);
+        if (isIntegrationTask && !hasTaskSection(block, "Integration Validation")) {
+          errors.push(`Task ${taskBlocks[i].taskNumber} missing Integration Validation section`);
+        }
+
+        const isBugFixTask = hasTaskKeyword(block, ["bug", "缺陷", "修复", "fix"]);
+        if (isBugFixTask && !hasTaskSection(block, "Bug Fix Trace")) {
+          errors.push(`Task ${taskBlocks[i].taskNumber} missing Bug Fix Trace section`);
+        }
+
+        const isRegressionTask = hasTaskKeyword(block, ["regression", "回归"]);
+        if (isRegressionTask && !hasTaskSection(block, "Regression Scope")) {
+          errors.push(`Task ${taskBlocks[i].taskNumber} missing Regression Scope section`);
+        }
+      }
+
+      const unmappedTodoIds = [...todoIds].filter((todoId) => !referencedTodoIds.has(todoId));
+      if (unmappedTodoIds.length > 0) {
+        errors.push(`TODO items missing task coverage in TASKS.md: ${unmappedTodoIds.join(", ")}`);
       }
     } catch {
       errors.push("TASKS.md not found at " + tasksPath);
@@ -372,7 +719,7 @@ const PHASE_COMPLETION_CHECKS: Record<WorkflowPhase, (specDir: string) => Promis
     return { valid: errors.length === 0, errors };
   },
 
-  implement: async (_specDir) => {
+  implement: async (specDir) => {
     const errors: string[] = [];
     try {
       const report = await generateCoverageReport();
@@ -380,30 +727,88 @@ const PHASE_COMPLETION_CHECKS: Record<WorkflowPhase, (specDir: string) => Promis
         errors.push(`Spec coverage is ${report.coveragePercent}% (minimum 80% required)`);
       }
 
-      const trackerState = await getTrackerState();
-      const completedTaskRefs = Object.values(trackerState.taskRefs).filter((taskRef) => !!taskRef.completedAt);
-      if (Object.keys(trackerState.taskRefs).length > 0 && completedTaskRefs.length === 0) {
-        errors.push("No tracker tasks are marked completed — implement phase requires completed key tasks before exit");
+      const todoEntries = Object.entries(report.todoSummary);
+      if (todoEntries.length === 0) {
+        errors.push("No TODO lifecycle entries found in coverage report — implement phase requires spec->todo tracking");
+      }
+
+      const configuredTodoIds = await getConfiguredTodoIds(specDir);
+      const missingTrackedTodos = [...configuredTodoIds].filter((todoId) => !(todoId in report.todoSummary));
+      if (missingTrackedTodos.length > 0) {
+        errors.push(`Implement phase requires every TODO to be tracked in coverage report: ${missingTrackedTodos.join(", ")}`);
+      }
+
+      const failedTodos = todoEntries.filter(([, todo]) => todo.status === "failed");
+      if (failedTodos.length > 0) {
+        errors.push(`TODOs in failed state must be resolved before leaving implement phase: ${failedTodos.map(([todoId]) => todoId).join(", ")}`);
+      }
+
+      const invalidTodoStates = todoEntries.filter(([, todo]) => !isExecutionLifecycleStatus(todo.status));
+      if (invalidTodoStates.length > 0) {
+        errors.push(`Coverage report contains invalid TODO lifecycle states: ${invalidTodoStates.map(([todoId]) => todoId).join(", ")}`);
+      }
+
+       const trackerState = await getTrackerState();
+       const completedTaskRefs = Object.values(trackerState.taskRefs).filter((taskRef) => !!taskRef.completedAt);
+       if (Object.keys(trackerState.taskRefs).length > 0 && completedTaskRefs.length === 0) {
+         errors.push("No tracker tasks are marked completed — implement phase requires completed key tasks before exit");
+      }
+
+      const evidenceFiles = await getEvidenceFiles();
+      if (!hasEvidenceMatch(evidenceFiles, [/unit/i, /vitest/i, /jest/i, /test/i])) {
+        errors.push(`Implement phase requires unit test execution evidence in ${EVIDENCE_DIR}`);
       }
 
       for (const taskRef of completedTaskRefs) {
         const taskNumberMatch = /(?:^|-)task-(\d+)(?:-|$)/i.exec(taskRef.taskId)
           ?? /(?:^|-)?(\d+)(?:-|$)/.exec(taskRef.taskId);
         const evidencePrefix = taskNumberMatch ? `task-${taskNumberMatch[1]}-` : taskRef.taskId;
-        const hasEvidenceDir = await pathExists(EVIDENCE_DIR);
-        if (!hasEvidenceDir) {
+        if (evidenceFiles.length === 0) {
           errors.push(`Evidence directory ${EVIDENCE_DIR} not found for completed task ${taskRef.taskId}`);
           break;
         }
-
-        const evidenceFiles = await fs.readdir(EVIDENCE_DIR);
-        const matchingEvidence = evidenceFiles.filter((file) => file.includes(evidencePrefix));
+        const matchingEvidence = evidenceFiles.filter((file: string) => file.includes(evidencePrefix));
         if (matchingEvidence.length === 0) {
           errors.push(`Completed task ${taskRef.taskId} has no evidence file in ${EVIDENCE_DIR}`);
         }
       }
     } catch {
       errors.push("Failed to generate coverage report");
+    }
+    return { valid: errors.length === 0, errors };
+  },
+
+  test: async (specDir) => {
+    const errors: string[] = [];
+    try {
+      const report = await generateCoverageReport();
+      const configuredTodoIds = await getConfiguredTodoIds(specDir);
+      const todoEntries = Object.entries(report.todoSummary);
+      const missingTrackedTodos = [...configuredTodoIds].filter((todoId) => !(todoId in report.todoSummary));
+      if (missingTrackedTodos.length > 0) {
+        errors.push(`Test phase requires every TODO to remain tracked: ${missingTrackedTodos.join(", ")}`);
+      }
+
+      const activeTodos = todoEntries.filter(([, todo]) => todo.status === "running" || todo.status === "failed");
+      if (activeTodos.length > 0) {
+        errors.push(`Test phase requires no running or failed TODOs: ${activeTodos.map(([todoId, todo]) => `${todoId}=${todo.status}`).join(", ")}`);
+      }
+
+      const evidenceFiles = await getEvidenceFiles();
+      if (!hasEvidenceMatch(evidenceFiles, [/integration/i, /联调/i, /contract/i, /e2e/i])) {
+        errors.push(`Test phase requires integration test evidence in ${EVIDENCE_DIR}`);
+      }
+      if (!hasEvidenceMatch(evidenceFiles, [/regression/i, /回归/i])) {
+        errors.push(`Test phase requires regression test evidence in ${EVIDENCE_DIR}`);
+      }
+
+      const bugFixSummary = await getBugFixSummary();
+      const unresolvedBugFixes = bugFixSummary.filter((bug) => bug.status !== "verified");
+      if (unresolvedBugFixes.length > 0) {
+        errors.push(`Test phase requires bug fixes to be verified: ${unresolvedBugFixes.map((bug) => `${bug.bugId}=${bug.status}`).join(", ")}`);
+      }
+    } catch {
+      errors.push("Failed to validate test phase artifacts");
     }
     return { valid: errors.length === 0, errors };
   },
@@ -431,10 +836,60 @@ const PHASE_COMPLETION_CHECKS: Record<WorkflowPhase, (specDir: string) => Promis
         errors.push(`Delivery checklist requires ${EVIDENCE_DIR} with QA evidence files`);
       } else {
         const evidenceFiles = await fs.readdir(EVIDENCE_DIR);
-        const finalReviewEvidence = evidenceFiles.find((file) => /final-review|review-summary/i.test(file));
+        const finalReviewEvidence = evidenceFiles.find((file: string) => /final-review|review-summary/i.test(file));
         if (!finalReviewEvidence) {
           errors.push("Final review evidence file is missing from .sisyphus/evidence/");
         }
+      }
+
+      const report = await generateCoverageReport();
+      const todoEntries = Object.entries(report.todoSummary);
+      if (todoEntries.length === 0) {
+        errors.push("Complete phase requires todoSummary entries in coverage report");
+      }
+
+      const configuredTodoIds = await getConfiguredTodoIds(".spec");
+      const missingTrackedTodos = [...configuredTodoIds].filter((todoId) => !(todoId in report.todoSummary));
+      if (missingTrackedTodos.length > 0) {
+        errors.push(`Complete phase requires every TODO to be tracked: ${missingTrackedTodos.join(", ")}`);
+      }
+
+      const unresolvedTodos = todoEntries.filter(([, todo]) => todo.status !== "done");
+      if (unresolvedTodos.length > 0) {
+        errors.push(`Complete phase requires all TODOs to be done: ${unresolvedTodos.map(([todoId, todo]) => `${todoId}=${todo.status}`).join(", ")}`);
+      }
+
+      const bugFixSummary = await getBugFixSummary();
+      const unresolvedBugFixes = bugFixSummary.filter((bug) => bug.status !== "verified");
+      if (unresolvedBugFixes.length > 0) {
+        errors.push(`Complete phase requires bug fixes to be verified: ${unresolvedBugFixes.map((bug) => `${bug.bugId}=${bug.status}`).join(", ")}`);
+      }
+
+      const tasksContent = await fs.readFile(path.join(".spec", "TASKS.md"), "utf-8");
+      const taskBlocks = parseTaskBlocks(tasksContent);
+      const hasIntegrationTask = taskBlocks.some((task) => {
+        const block = task.block;
+        return hasTaskKeyword(block, ["联调", "integration", "frontend-backend", "front-end/back-end", "api contract"])
+          || hasTaskSection(block, "Integration Validation");
+      });
+      if (!hasIntegrationTask) {
+        errors.push("Complete phase requires at least 1 integration/联调 task tracked in TASKS.md");
+      }
+
+      const hasBugfixTask = taskBlocks.some((task) => {
+        const block = task.block;
+        return hasTaskKeyword(block, ["bug", "缺陷", "修复", "fix"]) || hasTaskSection(block, "Bug Fix Trace");
+      });
+      if (!hasBugfixTask) {
+        errors.push("Complete phase requires at least 1 bug-fix/修复 task tracked in TASKS.md");
+      }
+
+      const hasRegressionTask = taskBlocks.some((task) => {
+        const block = task.block;
+        return hasTaskKeyword(block, ["regression", "回归"]) || hasTaskSection(block, "Regression Scope");
+      });
+      if (!hasRegressionTask) {
+        errors.push("Complete phase requires at least 1 regression/回归 task tracked in TASKS.md");
       }
     } catch {
       errors.push("Failed to run spec review");
@@ -501,7 +956,7 @@ export async function completePhase(metadata?: Record<string, unknown>): Promise
  * Reset the workflow state to initial state.
  * Optionally starts with a specific phase.
  */
-export async function reset(startPhase: WorkflowPhase = "constitution"): Promise<SpecWorkflowState> {
+export async function reset(startPhase: WorkflowPhase = "discovery"): Promise<SpecWorkflowState> {
   const release = await acquireLock(LOCK_FILE_PATH);
   try {
     const newState: SpecWorkflowState = {
@@ -535,7 +990,7 @@ export async function recoverSession(sessionId: string, phase?: WorkflowPhase): 
     // Create new state for recovered session
     const newState: SpecWorkflowState = {
       ...DEFAULT_STATE,
-      phase: phase ?? currentState?.phase ?? "constitution",
+      phase: phase ?? currentState?.phase ?? "discovery",
       sessionId,
       initializedAt: Date.now(),
       phaseStartedAt: Date.now(),
