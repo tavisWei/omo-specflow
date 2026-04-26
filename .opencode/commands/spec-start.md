@@ -4,16 +4,31 @@ argument-hint: <describe your project or feature idea>
 agent: metis
 ---
 
-# Spec Start — 3 轨道自适应面试 | 3-Track Adaptive Interview
+# Spec Start — 上游文档链 + 3 轨道自适应面试 | Upstream Doc Chain + 3-Track Adaptive Interview
 
 Launch a structured development workflow. The interview adapts based on your project type.
 
 This command drives the full phase flow:
-**Constitution → Specify → Plan → Tasks → Implement → Complete**.
+**Discovery（PRD 大纲优先迭代 + 竞品研究） → Architecture（架构推荐） → Design（UIUX 对齐 + 产品设计） → Constitution → Specify → Plan → Tasks → Implement → Test → Complete**。
+
+新增上游文档链确保需求在进入 SPEC/TASKS 之前经过充分调研、架构论证和设计对齐。
 
 It consumes the template system under `.opencode/spec-templates/` and the execution guidance under `.opencode/agent-instructions/`.
 
-## 第零步：绿地 vs 棕地 | Step 0: Greenfield vs Brownfield
+## 第零步：选择需求入口模式 | Step 0: Choose Entry Mode
+
+**Q0: 当前属于哪一种需求场景？Which delivery scenario best matches your need?**
+
+- **(M1) 从 0 到 1 Greenfield** — 新项目，从 Discovery 全链路开始
+- **(M2) 已有明确需求和原型图 Direct-Spec** — 已有 PRD / 原型 / 页面稿，跳过探索型调研
+- **(M3) 功能迭代 Brownfield Feature** — 在现有项目中增量增加或修改功能
+- **(M4) 修复 BUG Bugfix** — 围绕缺陷复现、根因、修复、验证展开
+
+→ 先确定入口模式，再继续 Q1-Q11 的项目类型和技术面试。
+
+---
+
+## 第 0.5 步：绿地 vs 棕地 | Step 0.5: Greenfield vs Brownfield
 
 **Q0: 这是新项目还是现有项目的迭代？Is this a new project or an iteration on an existing one?**
 
@@ -270,27 +285,59 @@ It consumes the template system under `.opencode/spec-templates/` and the execut
 
 面试完成后，Agent 按以下顺序执行：
 
-1. **初始化工作流** — 调用 `setState({ phase: "constitution" })` 进入 constitution 阶段
-2. **生成 Constitution** — 根据面试结果生成 `.spec/SPEC.md` 的 Constitution 章节
-3. **渐进式生成 Spec** — 按 TEMPLATE-GUIDE.md 的依赖顺序生成模板子集
-4. **注册条款** — 将 US/AC 条款注册到 spec-tracker
-5. **生成任务** — 创建 `.spec/TASKS.md`
-6. **细化任务** — 补充验收标准和 QA 场景
-7. **执行实现** — 按 Wave 分组并行执行
+1. **初始化工作流** — 调用 `setState({ phase: "discovery" })` 进入 Discovery 阶段
+2. **Discovery** — 先生成 `.spec/PRD.md`（大纲优先迭代），再生成 `.spec/COMPETITOR-RESEARCH.md`
+3. **Architecture** — 基于 PRD 和竞品研究生成 `.spec/ARCHITECTURE.md`
+4. **Design** — 生成 `.spec/UIUX.md`、`.spec/PRODUCT-DESIGN.md` 和 `.spec/.page-coverage.json`
+5. **Constitution** — 根据上游文档链生成 `.spec/SPEC.md` 的 Constitution 章节
+6. **Specify** — 按 TEMPLATE-GUIDE.md 的依赖顺序生成模板子集
+7. **注册条款** — 将 US/AC 条款注册到 spec-tracker
+8. **生成 TODO 桥** — 创建 `.spec/TODO.md`，将 SPEC / PRD / 架构 / 设计产物映射为结构化 TODO
+9. **生成任务** — 基于 `.spec/TODO.md` 创建 `.spec/TASKS.md`
+10. **细化任务** — 补充验收标准和 QA 场景
+11. **Orchestrator 执行** — 以 `SpecOrchestrator` 作为正式执行入口，按 Wave 分组执行 TASKS
+
+### Direct-Spec（已有明确需求和原型图）
+
+> 该模式不重新做开放式 Discovery，而是把现有需求/原型快速沉淀为可执行 spec。
+
+1. **读取现有输入** — 加载已有 PRD、原型图、页面说明、接口说明
+2. **文档吸收校验** — 检查需求、页面、接口是否足够形成 spec；缺口只补最小必要内容
+3. **跳过开放式竞品调研** — 不要求完整 COMPETITOR-RESEARCH，除非需求存在关键不确定性
+4. **Architecture / Design 对齐** — 将现有原型和需求映射到 `ARCHITECTURE.md`、`UIUX.md`、`PRODUCT-DESIGN.md`
+5. **Constitution / Specify** — 生成 `.spec/SPEC.md` 和按模板子集的核心 spec 文档
+6. **生成 TODO 桥** — 创建 `.spec/TODO.md`，把页面、接口、数据库、测试拆成 bridge todo
+7. **生成 TASKS** — 从 TODO 细化为 `.spec/TASKS.md`
+8. **进入 Orchestrator** — 执行 `Implement → Test → Complete`
 
 ### Brownfield（现有项目迭代）— 增量生成
 
 > 棕地模式下，**不重新生成整个 spec 集**。只更新受本次迭代影响的文档。
 
-1. **读取现有 Spec** — 扫描 `.spec/` 目录，加载已有 Constitution 和模板文件
-2. **差异分析** — 根据 BQ1（受影响模块）和 BQ2（范围外模块）确定需要更新的文档集合
-3. **增量更新 Constitution** — 仅追加/修改与本次迭代相关的约束和决策，不覆盖已有内容
-4. **按需扩展模板** — 只对受影响模块对应的模板文件执行 extend/patch，跳过无关模板
-5. **兼容性检查** — 根据 BQ3 约束，在生成的 API/Schema 文档中标注向后兼容要求
-6. **迁移文档** — 若 BQ4 有迁移需求，额外生成 `.spec/MIGRATION.md`（含回滚步骤）
-7. **增量任务** — 在现有 `.spec/TASKS.md` 中追加新 Wave，不重置已完成任务
-8. **回归标注** — 根据 BQ5，在任务中标注需要回归验证的现有功能
-9. **执行实现** — 仅执行新增/修改的 Wave
+1. **读取现有文档真源** — 扫描 `.spec/` 目录，加载已有上游文档、Constitution 和模板文件
+2. **差异分析** — 根据 BQ1（受影响模块）和 BQ2（范围外模块）确定需要更新的上游/下游文档集合
+3. **增量更新 Discovery** — 仅补丁受影响的 `PRD.md` / `COMPETITOR-RESEARCH.md`
+4. **增量更新 Architecture / Design** — 仅补丁受影响的 `ARCHITECTURE.md`、`UIUX.md`、`PRODUCT-DESIGN.md`
+5. **增量更新 Constitution** — 仅追加/修改与本次迭代相关的约束和决策，不覆盖已有内容
+6. **按需扩展模板** — 只对受影响模块对应的模板文件执行 extend/patch，跳过无关模板
+7. **兼容性检查** — 根据 BQ3 约束，在生成的 API/Schema 文档中标注向后兼容要求
+8. **迁移文档** — 若 BQ4 有迁移需求，额外生成 `.spec/MIGRATION.md`（含回滚步骤）
+9. **增量 TODO** — 在现有 `.spec/TODO.md` 中追加或修订受影响的 TODO 单元
+10. **增量任务** — 基于 `.spec/TODO.md` 在现有 `.spec/TASKS.md` 中追加新 Wave，不重置已完成任务
+11. **回归标注** — 根据 BQ5，在任务中标注需要回归验证的现有功能
+12. **Orchestrator 执行** — 仅通过 `SpecOrchestrator` 执行新增/修改的 Wave
+
+### Bugfix（缺陷修复）
+
+> 该模式围绕“复现 → 根因 → 修复 → 验证 → 回归”展开，而不是重走完整需求探索。
+
+1. **记录缺陷输入** — 收集复现步骤、期望结果、实际结果、影响范围
+2. **根因定位** — 生成最小化缺陷说明与影响分析，明确受影响模块
+3. **最小增量 Spec** — 只更新与缺陷相关的 spec 文档，不重写无关部分
+4. **Bug TODO 桥** — 在 `.spec/TODO.md` 中为缺陷生成 TODO 单元
+5. **Bug TASKS** — 在 `.spec/TASKS.md` 中生成修复任务、验证任务、回归任务
+6. **Bug 生命周期跟踪** — tracker 中按 `discovered → fixed → verified` 跟踪
+7. **进入 Test / Complete** — 必须完成缺陷验证与回归证据后才能放行
 
 **增量生成原则：**
 - 已存在且未受影响的 spec 文档 → 保持不变
@@ -304,3 +351,12 @@ It consumes the template system under `.opencode/spec-templates/` and the execut
 | Web 全栈 | 01-12（全部） | 无 |
 | API 服务 | 01, 02, 03, 07, 09, 10, 11, 12 | 04, 05, 06, 08 |
 | CLI 工具 | 01, 02, 10, 11, 12 | 03, 04, 05, 06, 07, 08, 09 |
+
+## 最佳实践入口映射 | Best-Practice Entry Mapping
+
+| 需求场景 | 推荐入口模式 | 推荐起始阶段 | 核心输出 |
+|---|---|---|---|
+| 从 0 到 1 项目开发 | Greenfield | Discovery | 完整上游文档链 + SPEC + TODO + TASKS |
+| 已有明确需求和原型图 | Direct-Spec | Architecture / Design 对齐 | 快速形成 SPEC + TODO + TASKS |
+| 功能迭代 | Brownfield Feature | Delta Spec / Impact Analysis | 增量 spec + 回归计划 + 增量 TODO / TASKS |
+| 修复 BUG | Bugfix | Bug Intake / Root Cause | Bug TODO + 修复任务 + 验证与回归证据 |
