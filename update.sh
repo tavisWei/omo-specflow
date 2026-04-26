@@ -1,29 +1,25 @@
 #!/bin/bash
-# OMO-SpecFlow 一键安装脚本
-# OMO-SpecFlow One-Click Installation Script
 
 set -e
 
 COMMAND_FILES=(spec-start.md sf-new.md sf-spec.md sf-iterate.md sf-bugfix.md)
 
-echo "🚀 OMO-SpecFlow 安装器"
+echo "🔄 OMO-SpecFlow 更新器"
 echo "=============================="
 
-# 检测安装方式
-INSTALL_MODE="global"
+UPDATE_MODE="global"
 
-# 解析参数
 while [[ $# -gt 0 ]]; do
     case $1 in
         --project)
-            INSTALL_MODE="project"
+            UPDATE_MODE="project"
             shift
             ;;
         --help)
             echo "用法: $0 [--project]"
             echo ""
             echo "选项:"
-            echo "  --project   安装到当前项目而不是全局"
+            echo "  --project   更新当前项目而不是全局"
             echo "  --help      显示此帮助信息"
             exit 0
             ;;
@@ -35,96 +31,61 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# 获取脚本所在目录
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-if [ "$INSTALL_MODE" = "global" ]; then
-    echo "📦 全局安装模式"
-    echo ""
+if [ "$UPDATE_MODE" = "global" ]; then
+    echo "🌍 全局更新模式"
+    mkdir -p ~/.config/opencode/skills ~/.config/opencode/commands ~/.config/opencode/spec-templates ~/.config/opencode/agent-instructions
 
-    # 创建目录
-    echo "📁 创建配置目录..."
-    mkdir -p ~/.config/opencode/skills
-    mkdir -p ~/.config/opencode/commands
-    mkdir -p ~/.config/opencode/spec-templates
-    mkdir -p ~/.config/opencode/agent-instructions
-
-    # 安装 Hook
-    echo "⚙️  安装 Hook..."
+    echo "⚙️  更新 Hook..."
     rm -rf ~/.config/opencode/skills/omo-specflow
     cp -r "$SCRIPT_DIR/.opencode/hooks/omo-specflow" ~/.config/opencode/skills/
 
-    # 安装命令
-    echo "⚡ 安装命令..."
+    echo "⚡ 更新命令..."
     for command_file in "${COMMAND_FILES[@]}"; do
         cp "$SCRIPT_DIR/.opencode/commands/$command_file" ~/.config/opencode/commands/
     done
 
-    # 安装模板
-    echo "📄 安装规格模板..."
+    echo "📄 更新规格模板..."
     rm -rf ~/.config/opencode/spec-templates/*
     cp -r "$SCRIPT_DIR/.opencode/spec-templates/"* ~/.config/opencode/spec-templates/
 
-    echo "🧠 安装 Agent 指令层..."
+    echo "🧠 更新 Agent 指令层..."
     rm -rf ~/.config/opencode/agent-instructions/*
     cp -r "$SCRIPT_DIR/.opencode/agent-instructions/"* ~/.config/opencode/agent-instructions/
 
-    echo ""
-    echo "✅ 全局安装完成!"
-    echo ""
-    echo "所有项目都可以使用 OMO-SpecFlow 了！"
-    echo ""
-    echo "快速开始:"
-    echo "  1. 在 OMO 中输入: /spec-start"
-    echo "  2. 或快捷输入: /sf-new /sf-spec /sf-iterate /sf-bugfix"
-    echo "  3. 或输入: 我要开发XXX功能"
-    echo ""
-    echo "模板位置: ~/.config/opencode/spec-templates/"
-
+    echo "✅ 全局更新完成!"
+    echo "可用命令: /spec-start /sf-new /sf-spec /sf-iterate /sf-bugfix"
 else
-    echo "📦 项目安装模式"
-    echo ""
+    echo "📦 项目更新模式"
 
-    # 检查是否在 git 项目中
     if [ ! -d ".git" ]; then
         echo "❌ 错误: 当前目录不是 Git 项目"
         echo "请在 Git 项目根目录运行此脚本"
         exit 1
     fi
 
-    # 创建目录
-    echo "📁 创建 .opencode 目录..."
-    mkdir -p .opencode/hooks
-    mkdir -p .opencode/commands
-    mkdir -p .opencode/spec-templates
-    mkdir -p .opencode/agent-instructions
+    mkdir -p .opencode/hooks .opencode/commands .opencode/spec-templates .opencode/agent-instructions
 
-    # 安装 Hook
-    echo "⚙️  安装 Hook..."
+    echo "⚙️  更新 Hook..."
     rm -rf .opencode/hooks/omo-specflow
     cp -r "$SCRIPT_DIR/.opencode/hooks/omo-specflow" .opencode/hooks/
 
-    # 安装命令
-    echo "⚡ 安装命令..."
+    echo "⚡ 更新命令..."
     for command_file in "${COMMAND_FILES[@]}"; do
         cp "$SCRIPT_DIR/.opencode/commands/$command_file" .opencode/commands/
     done
 
-    # 安装模板
-    echo "📄 安装规格模板..."
+    echo "📄 更新规格模板..."
     rm -rf .opencode/spec-templates/*
     cp -r "$SCRIPT_DIR/.opencode/spec-templates/"* .opencode/spec-templates/
 
-    echo "🧠 安装 Agent 指令层..."
+    echo "🧠 更新 Agent 指令层..."
     rm -rf .opencode/agent-instructions/*
     cp -r "$SCRIPT_DIR/.opencode/agent-instructions/"* .opencode/agent-instructions/
 
-    echo ""
-    echo "✅ 项目安装完成!"
-    echo ""
-    echo "在项目中可以使用 OMO-SpecFlow 了！"
+    echo "✅ 项目更新完成!"
 fi
 
-echo ""
 echo "=============================="
-echo "🎉 安装成功!"
+echo "🎉 更新成功!"
