@@ -40,7 +40,18 @@ Scenario: {场景名}
   Evidence: .sisyphus/evidence/task-{N}-{slug}.txt
 ```
 
+**Integration Validation**:
+- 前后端联调 / API Contract / Data consistency 的验证说明
+
+**Bug Fix Trace**:
+- 缺陷来源 / Root Cause / 修复验证
+
+**Regression Scope**:
+- 回归范围 / 关键路径 / 证据
+
 **Spec Refs**: US-001, AC-001, AC-002
+
+**Source TODOs**: TODO-001, TODO-002
 
 **Parallelization**:
 - Can Run In Parallel: YES/NO
@@ -66,7 +77,11 @@ Scenario: {场景名}
 | What to do | `**What to do**:` 下的列表 | 具体实现步骤，不允许模糊描述 |
 | Files | `**Files**:` 下的列表 | 需要创建/修改的文件路径 |
 | Acceptance Criteria | `**Acceptance Criteria**:` 下的 checkbox 列表 | 可验证的完成条件 |
+| Integration Validation | `**Integration Validation**:` 下的列表 | 前后端联调或接口契约验证 |
+| Bug Fix Trace | `**Bug Fix Trace**:` 下的列表 | 缺陷修复来源、根因、修复验证 |
+| Regression Scope | `**Regression Scope**:` 下的列表 | 回归测试范围与关键路径 |
 | Spec Refs | `**Spec Refs**: US-xxx, AC-xxx` | 关联的 spec 条款 |
+| Source TODOs | `**Source TODOs**: TODO-xxx` | 关联的桥接 TODO 条目 |
 | Parallelization | `**Parallelization**:` 下的键值对 | 并行执行信息 |
 
 ### 可选字段 Optional Fields
@@ -151,7 +166,18 @@ Scenario: Build succeeds
   Evidence: .sisyphus/evidence/task-1-build.txt
 ```
 
+**Integration Validation**:
+- 不适用（初始化任务无联调）
+
+**Bug Fix Trace**:
+- 不适用（初始化任务非缺陷修复）
+
+**Regression Scope**:
+- 冒烟验证 build / health route
+
 **Spec Refs**: US-001
+
+**Source TODOs**: TODO-001
 
 **Parallelization**:
 - Can Run In Parallel: NO
@@ -201,7 +227,18 @@ Scenario: Registration and login flow
   Evidence: .sisyphus/evidence/task-2-auth-flow.txt
 ```
 
+**Integration Validation**:
+- 验证注册接口、登录接口与受保护资源访问链路一致
+
+**Bug Fix Trace**:
+- 不适用（功能实现任务）
+
+**Regression Scope**:
+- 回归认证失败路径、过期 token、重复登录
+
 **Spec Refs**: US-001, AC-001, AC-002
+
+**Source TODOs**: TODO-002, TODO-003
 
 **Parallelization**:
 - Can Run In Parallel: NO
@@ -237,6 +274,8 @@ Scenario: Registration and login flow
 
 **Spec Refs**: US-001, US-002, AC-003
 
+**Source TODOs**: TODO-008
+
 **Parallelization**:
 - Can Run In Parallel: YES
 - Parallel Group: Wave 3
@@ -258,6 +297,7 @@ Scenario: Registration and login flow
 | `**What to do**:` 下内容 | `description` | 合并为描述文本 |
 | `**Files**:` 下列表 | （新增字段） | 提取文件路径 |
 | `**Acceptance Criteria**:` | `acceptanceCriteria` | 提取 checkbox 文本 |
+| `**Source TODOs**:` | `todoRefs` | 提取 TODO-xxx 引用 |
 | `**QA Scenarios**:` | （新增字段） | 提取代码块内容 |
 | `**Spec Refs**:` | （新增字段） | 逗号分隔提取 |
 | `Blocked By:` | `blockedBy` | 提取 Task ID 列表 |
