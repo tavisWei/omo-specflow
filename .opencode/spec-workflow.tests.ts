@@ -293,6 +293,14 @@ describe("OpenAgent Command Registry", () => {
   });
 });
 
+describe("Repository Metadata", () => {
+  it("includes an MIT license file", async () => {
+    const content = await fs.readFile("LICENSE", "utf-8");
+    expect(content).toContain("MIT License");
+    expect(content).toContain("Permission is hereby granted");
+  });
+});
+
 describe("End-to-End Workflow", () => {
   const DEV_INTENT_PATTERN = /^(我要|帮我|我想)?(开发|构建|实现|添加|新增|build|implement|create|add)\s*(.+)/i;
   const WORKFLOW_PHASES = [
