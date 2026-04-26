@@ -1,10 +1,58 @@
 # 模板依赖图和使用指南 | Template Dependency Graph & Usage Guide
 
-> 本文档定义 12 个 spec 模板之间的依赖关系、适用项目类型和生成顺序。
+> 本文档定义上游文档链模板和 12 个 spec 模板之间的依赖关系、适用项目类型和生成顺序。
 
 ---
 
-## 一、依赖关系图 | Dependency Graph
+## 零、上游文档链 | Upstream Document Chain
+
+> 在进入下游 SPEC 模板之前，先完成上游文档链，确保需求经过充分调研和设计论证。
+
+### 上游模板清单 | Upstream Templates
+
+| 模板 | 产出文件 | 作用 | 适用类型 |
+|---|---|---|---|
+| PRD.md | `.spec/PRD.md` | 产品需求文档（大纲优先迭代） | all |
+| COMPETITOR-RESEARCH.md | `.spec/COMPETITOR-RESEARCH.md` | 竞品研究（GitHub/市场竞品分析） | all |
+| ARCHITECTURE.md | `.spec/ARCHITECTURE.md` | 架构推荐（候选方案对比 + 推荐） | all |
+| UIUX.md | `.spec/UIUX.md` | UIUX 对齐（设计系统 + 页面清单） | web |
+| PRODUCT-DESIGN.md | `.spec/PRODUCT-DESIGN.md` | 产品设计（页面功能详情 + 验收标准） | web |
+
+### 上游依赖关系图 | Upstream Dependency Graph
+
+```mermaid
+graph LR
+    PRD["PRD.md<br/>产品需求"] --> CR["COMPETITOR-RESEARCH.md<br/>竞品研究"]
+    PRD --> ARCH["ARCHITECTURE.md<br/>架构推荐"]
+    CR --> ARCH
+    ARCH --> UIUX["UIUX.md<br/>UIUX对齐"]
+    PRD --> UIUX
+    UIUX --> PD["PRODUCT-DESIGN.md<br/>产品设计"]
+    PRD --> PD
+    ARCH --> PD
+    PD --> T01["01-需求文档"]
+    ARCH --> T02["02-技术架构"]
+    UIUX --> T04["04-设计规范"]
+    UIUX --> T05["05-页面流程"]
+    PD --> T06["06-页面功能细节"]
+```
+
+### 上游到下游的契约 | Upstream-to-Downstream Contracts
+
+| 上游文档 | 下游模板 | 继承内容 |
+|---|---|---|
+| PRD.md | 01-需求文档 | 用户故事、验收标准、非功能要求 |
+| SPEC.md | TODO.md | 可实现条款、页面功能缺口、架构约束的 TODO 映射 |
+| TODO.md | TASKS.md | 原子任务拆分、任务依赖、Wave 分组 |
+| ARCHITECTURE.md | 02-技术架构 | 技术栈选型、目录结构、模块划分 |
+| ARCHITECTURE.md | 07-数据库设计 | 数据模型概要 |
+| UIUX.md | 04-设计规范 | 设计系统（色彩、排版、间距） |
+| UIUX.md | 05-页面流程 | 页面关系树 |
+| PRODUCT-DESIGN.md | 06-页面功能细节 | 页面功能详情、交互状态 |
+
+---
+
+## 一、下游 SPEC 模板依赖关系图 | Downstream SPEC Template Dependency Graph
 
 ```mermaid
 graph TD
@@ -179,11 +227,32 @@ graph TD
 
 ## 四、生成顺序规则 | Generation Order Rules
 
+### 上游文档链生成顺序 | Upstream Generation Order
+
+1. **PRD.md** — 大纲优先迭代，用户确认大纲后再细化
+2. **COMPETITOR-RESEARCH.md** — 使用 grep_app_searchGitHub 搜索竞品
+3. **ARCHITECTURE.md** — 生成 2-3 个候选方案，对比后推荐
+4. **UIUX.md** — 仅 Web 项目，定义设计系统和页面清单
+5. **PRODUCT-DESIGN.md** — 仅 Web 项目，细化页面功能
+
+### 下游 SPEC 模板生成顺序 | Downstream SPEC Generation Order
+
 1. **始终先生成** 01-需求文档（所有类型的根依赖）
 2. **紧接着生成** 02-技术架构（大部分模板的上游依赖）
 3. **并行生成** 同一层级的无依赖模板（如 04/05/07 可并行）
 4. **最后生成** 叶子节点模板（06, 08, 10, 12）
 5. **跳过** 项目类型标记为 skip 的模板
+
+### 完整生成流程 | Complete Generation Flow
+
+```
+上游文档链:
+  PRD.md (大纲确认) → COMPETITOR-RESEARCH.md → ARCHITECTURE.md → UIUX.md → PRODUCT-DESIGN.md
+
+下游 SPEC 模板:
+  SPEC.md → TODO.md → TASKS.md → SpecOrchestrator
+  01 → 02 → {04, 05, 07} → {03, 06} → {09, 10, 11} → {08, 12}
+```
 
 ### 交叉引用标记格式 | Cross-Reference Tag Format
 
