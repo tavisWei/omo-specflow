@@ -268,16 +268,18 @@ describe("Update Script Command Coverage", () => {
 describe("README Deliverable Documentation", () => {
   it("documents architecture changes, entry mode table, examples, and install/update guidance", async () => {
     const content = await fs.readFile("README.md", "utf-8");
-    expect(content).toContain("10-phase workflow");
+    expect(content).toContain("10 个阶段");
     expect(content).toContain("Entry Modes");
-    expect(content).toContain("Commands");
-    expect(content).toContain("Usage Examples");
-    expect(content).toContain("Global Install");
-    expect(content).toContain("Global Update");
+    expect(content).toContain("入口命令表 | Commands");
+    expect(content).toContain("使用示例 | Usage Examples");
+    expect(content).toContain("一键安装（推荐） | Global Install");
+    expect(content).toContain("更新到最新版本 | Global Update");
     expect(content).toContain("/sf-new");
     expect(content).toContain("/sf-spec");
     expect(content).toContain("/sf-iterate");
     expect(content).toContain("/sf-bugfix");
+    expect(content).toContain("agent-instructions");
+    expect(content).toContain("22");
   });
 });
 
