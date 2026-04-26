@@ -46,6 +46,22 @@
         "/spec",
         "/specflow"
       ]
+    },
+    "sf-new": {
+      "path": ".opencode/commands/sf-new.md",
+      "description": "Greenfield 快捷入口"
+    },
+    "sf-spec": {
+      "path": ".opencode/commands/sf-spec.md",
+      "description": "Direct-Spec 快捷入口"
+    },
+    "sf-iterate": {
+      "path": ".opencode/commands/sf-iterate.md",
+      "description": "Brownfield Feature 快捷入口"
+    },
+    "sf-bugfix": {
+      "path": ".opencode/commands/sf-bugfix.md",
+      "description": "Bugfix 快捷入口"
     }
   },
 
@@ -61,8 +77,33 @@
           "agent": "omo-specflow"
         },
         {
+          "name": "discovery",
+          "description": "需求发现与竞品研究",
+          "phase": "discovery",
+          "artifacts": [".spec/PRD.md", ".spec/COMPETITOR-RESEARCH.md"]
+        },
+        {
+          "name": "architecture",
+          "description": "技术架构设计",
+          "phase": "architecture",
+          "artifacts": [".spec/ARCHITECTURE.md"]
+        },
+        {
+          "name": "design",
+          "description": "UI/UX 与产品设计",
+          "phase": "design",
+          "artifacts": [".spec/UIUX.md", ".spec/PRODUCT-DESIGN.md", ".spec/.page-coverage.json"]
+        },
+        {
+          "name": "constitution",
+          "description": "制定项目宪章（愿景、价值观、约束）",
+          "phase": "constitution",
+          "artifacts": [".spec/SPEC.md"]
+        },
+        {
           "name": "spec-generation",
           "description": "生成规范文档",
+          "phase": "specify",
           "agent": "spec-generator"
         },
         {
@@ -117,6 +158,9 @@
       "15-brownfield-mode",
       "16-impact-analysis",
       "17-regression-planning",
+      "18-discovery",
+      "19-architecture",
+      "20-design",
       "tasks-format-spec"
     ]
   },
