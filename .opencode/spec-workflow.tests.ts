@@ -685,7 +685,7 @@ describe("Behavioral lifecycle and phase-gate validation", () => {
     await fs.writeFile(".spec/TASKS.md", `## Task 1: Basic implementation\n\n- category: deep\n- skills: []\n\n**What to do**:\n- implement\n\n**Files**:\n- \`src/a.ts\`\n\n**Acceptance Criteria**:\n- [ ] done\n\n**QA Scenarios**:\nScenario: smoke\n  Tool: Bash (bun)\n  Steps:\n    1. bun test\n  Expected Result: ok\n  Evidence: .sisyphus/evidence/task-1.txt\n\n**Spec Refs**: US-001\n**Source TODOs**: TODO-001\n**Parallelization**:\n- Can Run In Parallel: NO\n- Blocked By: none\n- Blocks: none\n`, "utf-8");
     await fs.mkdir(".sisyphus/evidence", { recursive: true });
     await fs.writeFile(".sisyphus/evidence/final-review-summary.txt", "ok", "utf-8");
-    await fs.writeFile("README.md", "test readme", "utf-8");
+    await fs.writeFile("USAGE.md", "test usage", "utf-8");
 
     const result = await workflowState.validatePhaseCompletion("complete");
     expect(result.valid).toBe(false);
@@ -694,7 +694,7 @@ describe("Behavioral lifecycle and phase-gate validation", () => {
     expect(result.errors.some((error) => error.includes("bug-fix/修复"))).toBe(true);
     expect(result.errors.some((error) => error.includes("regression/回归"))).toBe(true);
 
-    try { await fs.unlink("README.md"); } catch { /* ignore */ }
+    try { await fs.unlink("USAGE.md"); } catch { /* ignore */ }
   });
 });
 
