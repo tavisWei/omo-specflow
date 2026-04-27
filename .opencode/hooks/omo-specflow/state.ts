@@ -1,6 +1,7 @@
 import * as fs from "fs/promises";
 import * as path from "path";
-import { generateCoverageReport, getBugFixSummary, getState as getTrackerState } from "./spec-tracker.js";
+import { generateCoverageReport, getBugFixSummary, getPendingSyncState, getState as getTrackerState, getTasksNeedingResync } from "./spec-tracker.js";
+import { detectTemplateGaps, inferProjectType } from "./artifact-coverage.js";
 import { performSpecReview } from "./spec-review.js";
 
 const EVIDENCE_DIR = ".sisyphus/evidence";
@@ -79,6 +80,15 @@ export interface SpecWorkflowState {
   sessionId?: string;
   /** Optional metadata for each phase */
   metadata?: Partial<Record<WorkflowPhase, Record<string, unknown>>>;
+  /** Pending downstream synchronization requirements */
+  syncRequirements?: {
+    specVersion: string;
+    needsTodoResync: boolean;
+    needsTaskResync: boolean;
+    needsRegressionReplan: boolean;
+    templateGaps?: string[];
+    updatedAt: number;
+  };
 }
 
 /**
@@ -275,6 +285,86 @@ async function getConfiguredTodoIds(specDir: string): Promise<Set<string>> {
   } catch {
     return new Set<string>();
   }
+}
+
+async function getDetectedTemplateGaps(specDir: string, workflowState?: SpecWorkflowState): Promise<string[]> {
+  const trackerState = await getTrackerState();
+  const discoveryMetadata = workflowState?.metadata?.discovery ?? {};
+  const interviewTrack = typeof discoveryMetadata.interviewTrack === "string"
+    ? discoveryMetadata.interviewTrack.toLowerCase()
+    : "web";
+  const specDirEntries = await fs.readdir(specDir).catch(() => [] as string[]);
+  const existingFiles = new Set(specDirEntries);
+  const clauseText = Object.values(trackerState.clauses)
+    .map((clause) => `${clause.section}\n${clause.title}\n${clause.content}`)
+    .join("\n");
+
+  return detectTemplateGaps({
+    projectType: inferProjectType(interviewTrack),
+    clauseText,
+    existingFiles,
+  });
+}
+
+async function syncWorkflowStateWithTracker(): Promise<SpecWorkflowState> {
+  const workflowState = await readStateFile() ?? { ...DEFAULT_STATE };
+  const syncState = await getPendingSyncState();
+  if (!syncState) {
+    if (!workflowState.syncRequirements) {
+      return workflowState;
+    }
+
+    const nextState: SpecWorkflowState = {
+      ...workflowState,
+      syncRequirements: undefined,
+    };
+    await writeStateFile(nextState);
+    return nextState;
+  }
+
+  const templateGaps = await getDetectedTemplateGaps(".spec", workflowState);
+  const nextState: SpecWorkflowState = {
+    ...workflowState,
+    syncRequirements: {
+      specVersion: syncState.specVersion,
+      needsTodoResync: syncState.needsTodoResync,
+      needsTaskResync: syncState.needsTaskResync,
+      needsRegressionReplan: syncState.needsRegressionReplan,
+      templateGaps,
+      updatedAt: syncState.updatedAt,
+    },
+  };
+  await writeStateFile(nextState);
+  return nextState;
+}
+
+async function collectSyncGateErrors(specDir: string): Promise<string[]> {
+  const errors: string[] = [];
+  const syncedState = await syncWorkflowStateWithTracker();
+  const syncRequirements = syncedState.syncRequirements;
+  if (!syncRequirements) {
+    return errors;
+  }
+
+  if (syncRequirements.needsTodoResync) {
+    errors.push(`Spec changed in ${syncRequirements.specVersion}; TODO.md must be resynchronized before proceeding`);
+  }
+  if (syncRequirements.needsTaskResync) {
+    errors.push(`Spec changed in ${syncRequirements.specVersion}; TASKS.md must be resynchronized before proceeding`);
+  }
+  if (syncRequirements.needsRegressionReplan) {
+    errors.push(`Spec changed in ${syncRequirements.specVersion}; regression plan and evidence scope must be refreshed before proceeding`);
+  }
+  if ((syncRequirements.templateGaps?.length ?? 0) > 0) {
+    errors.push(`Spec scope requires additional template coverage: ${syncRequirements.templateGaps?.join(", ")}`);
+  }
+
+  const tasksNeedingResync = await getTasksNeedingResync();
+  if (tasksNeedingResync.length > 0) {
+    errors.push(`Tasks requiring spec resync: ${tasksNeedingResync.map((task) => task.taskId).join(", ")}`);
+  }
+
+  return errors;
 }
 
 async function getEvidenceFiles(): Promise<string[]> {
@@ -624,7 +714,7 @@ const PHASE_COMPLETION_CHECKS: Record<WorkflowPhase, (specDir: string) => Promis
   },
 
   plan: async (specDir) => {
-    const errors: string[] = [];
+    const errors: string[] = await collectSyncGateErrors(specDir);
     const tasksPath = path.join(specDir, "TASKS.md");
     const todoPath = path.join(specDir, "TODO.md");
     try {
@@ -649,7 +739,7 @@ const PHASE_COMPLETION_CHECKS: Record<WorkflowPhase, (specDir: string) => Promis
   },
 
   tasks: async (specDir) => {
-    const errors: string[] = [];
+    const errors: string[] = await collectSyncGateErrors(specDir);
     const tasksPath = path.join(specDir, "TASKS.md");
     const todoPath = path.join(specDir, "TODO.md");
     let todoIds = new Set<string>();
@@ -720,7 +810,7 @@ const PHASE_COMPLETION_CHECKS: Record<WorkflowPhase, (specDir: string) => Promis
   },
 
   implement: async (specDir) => {
-    const errors: string[] = [];
+    const errors: string[] = await collectSyncGateErrors(specDir);
     try {
       const report = await generateCoverageReport();
       if (report.coveragePercent < 80) {
@@ -779,7 +869,7 @@ const PHASE_COMPLETION_CHECKS: Record<WorkflowPhase, (specDir: string) => Promis
   },
 
   test: async (specDir) => {
-    const errors: string[] = [];
+    const errors: string[] = await collectSyncGateErrors(specDir);
     try {
       const report = await generateCoverageReport();
       const configuredTodoIds = await getConfiguredTodoIds(specDir);
@@ -814,7 +904,7 @@ const PHASE_COMPLETION_CHECKS: Record<WorkflowPhase, (specDir: string) => Promis
   },
 
   complete: async (_specDir) => {
-    const errors: string[] = [];
+    const errors: string[] = await collectSyncGateErrors(".spec");
     try {
       const review = await performSpecReview();
       if (review.verdict !== "OKAY") {

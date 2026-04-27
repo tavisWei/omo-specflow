@@ -1,12 +1,16 @@
 import * as fs from "fs/promises";
 import * as path from "path";
 import {
+  getPendingSyncState,
   getState,
+  getTasksNeedingResync,
   getIncompleteClauses,
   generateCoverageReport,
   type SpecCoverageReport,
 } from "./spec-tracker.js";
 import {
+  detectTemplateGaps,
+  inferProjectType,
   generateArtifactCoverageReport,
   artifactIssuesToReviewIssues,
   artifactPreflightCheck,
@@ -107,6 +111,16 @@ async function readFileSafe(filePath: string): Promise<string | null> {
       return null;
     }
     throw err;
+  }
+}
+
+async function readSpecWorkflowMetadata(): Promise<Record<string, unknown> | undefined> {
+  try {
+    const raw = await fs.readFile(".spec/.workflow-state.json", "utf-8");
+    const parsed = JSON.parse(raw) as { metadata?: Record<string, unknown> };
+    return parsed.metadata;
+  } catch {
+    return undefined;
   }
 }
 
@@ -589,6 +603,9 @@ export async function performSpecReview(planPath?: string): Promise<SpecReviewRe
   const changeManagementIssues = await checkChangeManagementReadiness();
   issues.push(...changeManagementIssues);
 
+  const pendingResyncIssues = await checkPendingResynchronization(specDir);
+  issues.push(...pendingResyncIssues);
+
   // Check upstream artifact coverage
   const artifactReport = await generateArtifactCoverageReport("web", specDir);
   const artifactIssues = artifactIssuesToReviewIssues(artifactReport);
@@ -1017,6 +1034,72 @@ async function checkChangeManagementReadiness(): Promise<SpecReviewIssue[]> {
     description: "Spec tracker shows version history, but no change log was found in SPEC.md or TASKS.md",
     suggestion: "Add a change record table when requirements, acceptance criteria, or constraints change",
   }];
+}
+
+async function checkPendingResynchronization(specDir: string): Promise<SpecReviewIssue[]> {
+  const issues: SpecReviewIssue[] = [];
+  const syncState = await getPendingSyncState();
+  if (!syncState) {
+    return issues;
+  }
+
+  if (syncState.needsTodoResync) {
+    issues.push({
+      severity: "blocking",
+      category: "variation",
+      description: `Spec version ${syncState.specVersion} requires TODO.md resynchronization before review can pass`,
+      suggestion: "Refresh TODO.md from the updated spec before proceeding",
+    });
+  }
+  if (syncState.needsTaskResync) {
+    issues.push({
+      severity: "blocking",
+      category: "variation",
+      description: `Spec version ${syncState.specVersion} requires TASKS.md resynchronization before review can pass`,
+      suggestion: "Regenerate or patch TASKS.md from the updated TODO/spec before proceeding",
+    });
+  }
+  if (syncState.needsRegressionReplan) {
+    issues.push({
+      severity: "blocking",
+      category: "variation",
+      description: `Spec version ${syncState.specVersion} requires regression replanning before review can pass`,
+      suggestion: "Update regression tasks and evidence scope after the spec change",
+    });
+  }
+
+  const tasksNeedingResync = await getTasksNeedingResync();
+  if (tasksNeedingResync.length > 0) {
+    issues.push({
+      severity: "blocking",
+      category: "variation",
+      description: `Tasks require spec resync: ${tasksNeedingResync.map((task) => task.taskId).join(", ")}`,
+      suggestion: "Reconcile the listed tasks with the changed clauses before execution or completion",
+    });
+  }
+
+  const specFiles = await fs.readdir(specDir).catch(() => [] as string[]);
+  const existingFiles = new Set(specFiles);
+  const trackerState = await readTrackerStateSafe();
+  const clauseText = Object.values(trackerState?.clauses ?? {})
+    .map((clause) => `${clause.section}\n${clause.title}\n${clause.content}`)
+    .join("\n");
+  const metadata = await readSpecWorkflowMetadata();
+  const templateGaps = detectTemplateGaps({
+    projectType: inferProjectType(metadata?.discovery?.interviewTrack),
+    clauseText,
+    existingFiles,
+  });
+  if (templateGaps.length > 0) {
+    issues.push({
+      severity: "blocking",
+      category: "variation",
+      description: `Spec scope has uncovered template gaps: ${templateGaps.join(", ")}`,
+      suggestion: "Generate or backfill the missing spec documents before continuing",
+    });
+  }
+
+  return issues;
 }
 
 /**

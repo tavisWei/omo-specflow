@@ -122,6 +122,60 @@ export interface CoverageThresholdConfig {
   coverageGapsBlocking: boolean;
 }
 
+export interface TemplateGapContext {
+  projectType?: ProjectType;
+  clauseText: string;
+  existingFiles: Set<string>;
+}
+
+export function inferProjectType(interviewTrack?: unknown): ProjectType {
+  if (typeof interviewTrack !== "string") {
+    return "web";
+  }
+
+  const normalizedTrack = interviewTrack.toLowerCase();
+  return normalizedTrack === "api" || normalizedTrack === "cli" ? normalizedTrack : "web";
+}
+
+export function detectTemplateGaps(context: TemplateGapContext): string[] {
+  const normalizedTrack = inferProjectType(context.projectType);
+  const clauseText = context.clauseText.toLowerCase();
+  const existingFiles = context.existingFiles;
+  const gaps: string[] = [];
+
+  const needsUiDocs = /页面|page|route|ui|交互|modal|screen|dashboard/.test(clauseText);
+  if (normalizedTrack !== "cli" && needsUiDocs) {
+    if (!existingFiles.has("UIUX.md") && !existingFiles.has("04-设计规范.md")) {
+      gaps.push("UIUX/04-设计规范");
+    }
+    if (!existingFiles.has("PRODUCT-DESIGN.md") && !existingFiles.has("06-页面功能细节.md")) {
+      gaps.push("PRODUCT-DESIGN/06-页面功能细节");
+    }
+  }
+
+  const needsApiDocs = /api|接口|endpoint|request|response/.test(clauseText);
+  if (normalizedTrack !== "cli" && needsApiDocs && !existingFiles.has("03-接口文档.md")) {
+    gaps.push("03-接口文档");
+  }
+
+  const needsDbDocs = /database|数据库|table|schema|migration|index|query/.test(clauseText);
+  if (normalizedTrack !== "cli" && needsDbDocs && !existingFiles.has("07-数据库设计.md")) {
+    gaps.push("07-数据库设计");
+  }
+
+  const needsIntegrationDocs = /stripe|s3|r2|resend|sendgrid|posthog|mixpanel|oauth|第三方|integration/.test(clauseText);
+  if (needsIntegrationDocs && !existingFiles.has("08-第三方服务集成.md")) {
+    gaps.push("08-第三方服务集成");
+  }
+
+  const needsPerfDocs = /performance|性能|latency|p95|throughput|benchmark|lcp|cls/.test(clauseText);
+  if (needsPerfDocs && !existingFiles.has("12-性能要求.md")) {
+    gaps.push("12-性能要求");
+  }
+
+  return [...new Set(gaps)];
+}
+
 export const DEFAULT_THRESHOLD_CONFIG: CoverageThresholdConfig = {
   pageCoveragePercent: 80,
   minCompetitors: 2,

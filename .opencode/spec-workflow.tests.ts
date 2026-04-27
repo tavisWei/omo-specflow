@@ -27,8 +27,11 @@ async function cleanupSpecRuntimeArtifacts(): Promise<void> {
     ".spec/.spec-tracker.lock",
     ".spec/TASKS.md",
     ".spec/TODO.md",
+    ".spec/SPEC.md",
     ".spec/.workflow-state.json",
     ".spec/.workflow-state.lock",
+    ".spec/.page-coverage.json",
+    "USAGE.md",
   ];
   for (const target of targets) {
     try { await fs.unlink(target); } catch { /* ignore */ }
@@ -678,6 +681,54 @@ describe("Behavioral lifecycle and phase-gate validation", () => {
     expect(summary[0].evidence[0].path).toContain("bug-001-verify.txt");
   });
 
+  it("flags downstream resync when tracked clauses change", async () => {
+    const tracker = await import("./hooks/omo-specflow/spec-tracker.js");
+
+    await tracker.setState({ currentVersion: "v1" });
+    await tracker.registerClause("US-001", "01-需求文档", "Story", "before");
+    await tracker.recordTaskSpecRefs("task-1", ["US-001"], { todoIds: ["TODO-001"], status: "pending" });
+
+    const diff = await tracker.updateSpecVersion("v2", [{ clauseId: "US-001", section: "01-需求文档", title: "Story", content: "after" }]);
+    const state = await tracker.getState();
+    const tasksNeedingResync = await tracker.getTasksNeedingResync();
+    const syncState = await tracker.getPendingSyncState();
+
+    expect(diff.modified).toHaveLength(1);
+    expect(tasksNeedingResync.map((task) => task.taskId)).toContain("task-1");
+    expect(state.taskRefs["task-1"].needsResync).toBe(true);
+    expect(state.taskRefs["task-1"].resyncClauseIds).toContain("US-001");
+    expect(syncState?.needsTodoResync).toBe(true);
+    expect(syncState?.needsTaskResync).toBe(true);
+    expect(syncState?.needsRegressionReplan).toBe(true);
+  });
+
+  it("preserves resync markers during ordinary task updates and clears gates when sync state is cleared", async () => {
+    const tracker = await import("./hooks/omo-specflow/spec-tracker.js");
+    const workflowState = await import("./hooks/omo-specflow/state.js");
+
+    await workflowState.setState({ phase: "plan" });
+    await tracker.setState({ currentVersion: "v1" });
+    await tracker.registerClause("US-001", "01-需求文档", "Story", "before");
+    await tracker.recordTaskSpecRefs("task-1", ["US-001"], { todoIds: ["TODO-001"], status: "pending" });
+    await fs.writeFile(".spec/TODO.md", "| TODO-001 | src | scope | P0 | note |\n", "utf-8");
+    await fs.writeFile(".spec/TASKS.md", "## Task 1: Resync me\n\n**Acceptance Criteria**:\n- [ ] done\n\n**Files**:\n- `src/a.ts`\n\n**QA Scenarios**:\nScenario: smoke\n  Tool: Bash\n  Steps:\n    1. bun test\n  Expected Result: ok\n  Evidence: .sisyphus/evidence/task-1.txt\n\n**Spec Refs**: US-001\n**Source TODOs**: TODO-001\n", "utf-8");
+    await tracker.updateSpecVersion("v2", [{ clauseId: "US-001", section: "01-需求文档", title: "Story", content: "after" }]);
+
+    await tracker.recordTaskSpecRefs("task-1", ["US-001"], { evidence: [".sisyphus/evidence/task-1-extra.txt"] });
+    let state = await tracker.getState();
+    expect(state.taskRefs["task-1"].needsResync).toBe(true);
+    expect(state.taskRefs["task-1"].resyncClauseIds).toContain("US-001");
+
+    await tracker.clearPendingSyncState();
+    state = await tracker.getState();
+    expect(state.syncState).toBeUndefined();
+    expect(state.taskRefs["task-1"].needsResync).toBe(false);
+    expect(state.taskRefs["task-1"].resyncClauseIds).toEqual([]);
+
+    const result = await workflowState.validatePhaseCompletion("plan");
+    expect(result.errors.some((error) => error.includes("must be resynchronized"))).toBe(false);
+  });
+
   it("fails test phase when integration or regression evidence is missing", async () => {
     const workflowState = await import("./hooks/omo-specflow/state.js");
     const tracker = await import("./hooks/omo-specflow/spec-tracker.js");
@@ -693,6 +744,26 @@ describe("Behavioral lifecycle and phase-gate validation", () => {
     expect(result.valid).toBe(false);
     expect(result.errors.some((error) => error.includes("integration test evidence"))).toBe(true);
     expect(result.errors.some((error) => error.includes("regression test evidence"))).toBe(true);
+  });
+
+  it("blocks downstream phases when spec changes require resynchronization", async () => {
+    const workflowState = await import("./hooks/omo-specflow/state.js");
+    const tracker = await import("./hooks/omo-specflow/spec-tracker.js");
+
+    await workflowState.setState({ phase: "plan" });
+    await tracker.setState({ currentVersion: "v1" });
+    await tracker.registerClause("US-001", "01-需求文档", "Story", "before" );
+    await tracker.recordTaskSpecRefs("task-1", ["US-001"], { todoIds: ["TODO-001"], status: "pending" });
+    await fs.writeFile(".spec/TODO.md", "| TODO-001 | src | scope | P0 | note |\n", "utf-8");
+    await fs.writeFile(".spec/TASKS.md", "## Task 1: Resync me\n\n**Acceptance Criteria**:\n- [ ] done\n\n**Files**:\n- `src/a.ts`\n\n**QA Scenarios**:\nScenario: smoke\n  Tool: Bash\n  Steps:\n    1. bun test\n  Expected Result: ok\n  Evidence: .sisyphus/evidence/task-1.txt\n\n**Spec Refs**: US-001\n**Source TODOs**: TODO-001\n", "utf-8");
+
+    await tracker.updateSpecVersion("v2", [{ clauseId: "US-001", section: "01-需求文档", title: "Story", content: "after" }]);
+
+    const result = await workflowState.validatePhaseCompletion("plan");
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((error) => error.includes("TODO.md must be resynchronized"))).toBe(true);
+    expect(result.errors.some((error) => error.includes("TASKS.md must be resynchronized"))).toBe(true);
+    expect(result.errors.some((error) => error.includes("Tasks requiring spec resync: task-1"))).toBe(true);
   });
 
   it("fails complete phase when todo summary is unresolved or missing integration/bugfix/regression tasks", async () => {
@@ -711,7 +782,7 @@ describe("Behavioral lifecycle and phase-gate validation", () => {
 
     const result = await workflowState.validatePhaseCompletion("complete");
     expect(result.valid).toBe(false);
-    expect(result.errors.some((error) => error.includes("Complete phase requires all TODOs to be done"))).toBe(true);
+    expect(result.errors).toContain("Complete phase requires all TODOs to be done: TODO-001=running");
     expect(result.errors.some((error) => error.includes("integration/联调"))).toBe(true);
     expect(result.errors.some((error) => error.includes("bug-fix/修复"))).toBe(true);
     expect(result.errors.some((error) => error.includes("regression/回归"))).toBe(true);
@@ -901,6 +972,79 @@ describe("Agent Instructions", () => {
     expect(review).toContain("缺证据但声称已完成");
     expect(evidence).toContain("final-review-summary.txt");
     expect(evidence).toContain("不允许只有“pass”而没有上下文");
+  });
+
+  it("exposes dynamic resync enforcement in runtime sources", async () => {
+    const tracker = await readRepoFile(path.join(HOOKS_DIR, "spec-tracker.ts"));
+    const state = await readRepoFile(path.join(HOOKS_DIR, "state.ts"));
+    const review = await readRepoFile(path.join(HOOKS_DIR, "spec-review.ts"));
+    const artifactCoverage = await readRepoFile(path.join(HOOKS_DIR, "artifact-coverage.ts"));
+
+    expect(tracker).toContain("needsTodoResync");
+    expect(tracker).toContain("getTasksNeedingResync");
+    expect(state).toContain("collectSyncGateErrors");
+    expect(state).toContain("syncRequirements");
+    expect(review).toContain("checkPendingResynchronization");
+    expect(review).toContain("requires TASKS.md resynchronization");
+    expect(artifactCoverage).toContain("export function detectTemplateGaps");
+    expect(artifactCoverage).toContain("export function inferProjectType");
+    expect(state).toContain("detectTemplateGaps");
+    expect(state).toContain("inferProjectType");
+    expect(review).toContain("detectTemplateGaps");
+    expect(review).toContain("inferProjectType");
+    expect(review).not.toContain("import(\"./state.js\")");
+  });
+
+  it("detectTemplateGaps returns UI and API gaps for web scope", async () => {
+    const { detectTemplateGaps } = await import("./hooks/omo-specflow/artifact-coverage.js");
+    const gaps = detectTemplateGaps({
+      projectType: "web",
+      clauseText: "需要 dashboard 页面、API 接口、数据库 schema",
+      existingFiles: new Set<string>(),
+    });
+
+    expect(gaps).toContain("UIUX/04-设计规范");
+    expect(gaps).toContain("PRODUCT-DESIGN/06-页面功能细节");
+    expect(gaps).toContain("03-接口文档");
+    expect(gaps).toContain("07-数据库设计");
+  });
+
+  it("detectTemplateGaps skips UI gaps for cli scope", async () => {
+    const { detectTemplateGaps } = await import("./hooks/omo-specflow/artifact-coverage.js");
+    const gaps = detectTemplateGaps({
+      projectType: "cli",
+      clauseText: "需要 dashboard 页面和 terminal command",
+      existingFiles: new Set<string>(),
+    });
+
+    expect(gaps).not.toContain("UIUX/04-设计规范");
+    expect(gaps).not.toContain("PRODUCT-DESIGN/06-页面功能细节");
+  });
+
+  it("inferProjectType normalizes supported tracks and defaults to web", async () => {
+    const { inferProjectType } = await import("./hooks/omo-specflow/artifact-coverage.js");
+
+    expect(inferProjectType("API")).toBe("api");
+    expect(inferProjectType("cli")).toBe("cli");
+    expect(inferProjectType("unknown")).toBe("web");
+    expect(inferProjectType(undefined)).toBe("web");
+  });
+
+  it("returns REJECT review when resync is pending", async () => {
+    const tracker = await import("./hooks/omo-specflow/spec-tracker.js");
+    const review = await import("./hooks/omo-specflow/spec-review.js");
+
+    await tracker.setState({ currentVersion: "v1" });
+    await tracker.registerClause("US-001", "01-需求文档", "Story", "before");
+    await tracker.recordTaskSpecRefs("task-1", ["US-001"], { todoIds: ["TODO-001"], status: "pending" });
+    await fs.writeFile(".spec/SPEC.md", "# SPEC\n\nUS-001: before\n", "utf-8");
+    await fs.writeFile(".spec/TODO.md", "| TODO-001 | src | scope | P0 | note |\n", "utf-8");
+    await fs.writeFile(".spec/TASKS.md", "## Task 1: Resync me\n\n**Acceptance Criteria**:\n- [ ] done\n\n**Files**:\n- `src/a.ts`\n\n**QA Scenarios**:\nScenario: smoke\n  Tool: Bash\n  Steps:\n    1. bun test\n  Expected Result: ok\n  Evidence: .sisyphus/evidence/task-1.txt\n\n**Spec Refs**: US-001\n**Source TODOs**: TODO-001\n", "utf-8");
+    await tracker.updateSpecVersion("v2", [{ clauseId: "US-001", section: "01-需求文档", title: "Story", content: "after" }]);
+
+    const result = await review.performSpecReview();
+    expect(result.verdict).toBe("REJECT");
+    expect(result.issues.some((issue) => issue.severity === "blocking" && issue.category === "variation")).toBe(true);
   });
 });
 

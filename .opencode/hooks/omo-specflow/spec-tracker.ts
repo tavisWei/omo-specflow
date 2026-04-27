@@ -120,6 +120,22 @@ export interface TaskSpecRef {
   handoff?: HandoffRecord;
   notes?: string;
   blockedBy?: string[];
+  needsResync?: boolean;
+  resyncClauseIds?: string[];
+  lastSpecVersion?: string;
+}
+
+/**
+ * Downstream synchronization status after spec changes
+ */
+export interface SpecSyncState {
+  specVersion: string;
+  affectedClauseIds: string[];
+  affectedTaskIds: string[];
+  needsTodoResync: boolean;
+  needsTaskResync: boolean;
+  needsRegressionReplan: boolean;
+  updatedAt: number;
 }
 
 /**
@@ -194,6 +210,8 @@ export interface SpecTrackerState {
   bugFixes: Record<string, BugFixRecord>;
   /** Spec version history */
   versionHistory: SpecVersion[];
+  /** Pending downstream synchronization requirements */
+  syncState?: SpecSyncState;
   /** Last updated timestamp */
   updatedAt: number;
 }
@@ -207,6 +225,7 @@ const DEFAULT_STATE: SpecTrackerState = {
   taskRefs: {},
   bugFixes: {},
   versionHistory: [],
+  syncState: undefined,
   updatedAt: Date.now(),
 };
 
@@ -355,8 +374,27 @@ function normalizeTaskRef(taskRef: TaskSpecRef): TaskSpecRef {
     references: dedupe(taskRef.references ?? []),
     todoIds: dedupe(taskRef.todoIds ?? []),
     blockedBy: dedupe(taskRef.blockedBy ?? []),
+    needsResync: taskRef.needsResync ?? false,
+    resyncClauseIds: dedupe(taskRef.resyncClauseIds ?? []),
+    lastSpecVersion: taskRef.lastSpecVersion,
     handoff,
     status,
+  };
+}
+
+function normalizeSyncState(syncState?: SpecSyncState): SpecSyncState | undefined {
+  if (!syncState) {
+    return undefined;
+  }
+
+  return {
+    specVersion: syncState.specVersion,
+    affectedClauseIds: dedupe(syncState.affectedClauseIds ?? []),
+    affectedTaskIds: dedupe(syncState.affectedTaskIds ?? []),
+    needsTodoResync: syncState.needsTodoResync ?? false,
+    needsTaskResync: syncState.needsTaskResync ?? false,
+    needsRegressionReplan: syncState.needsRegressionReplan ?? false,
+    updatedAt: syncState.updatedAt ?? Date.now(),
   };
 }
 
@@ -387,6 +425,7 @@ function normalizeState(state: SpecTrackerState): SpecTrackerState {
       ...version,
       clauses: version.clauses.map(normalizeClause),
     })),
+    syncState: normalizeSyncState(state.syncState),
     updatedAt: state.updatedAt ?? Date.now(),
   };
 }
@@ -436,6 +475,19 @@ async function readStateFile(): Promise<SpecTrackerState | null> {
     }
     throw err;
   }
+}
+
+async function readSyncStateSnapshot(): Promise<SpecSyncState | undefined> {
+  const state = await readStateFile();
+  return state?.syncState;
+}
+
+async function readTasksNeedingResyncSnapshot(): Promise<TaskSpecRef[]> {
+  const state = await readStateFile();
+  if (!state) {
+    return [];
+  }
+  return Object.values(state.taskRefs).filter((taskRef) => taskRef.needsResync);
 }
 
 /**
@@ -598,6 +650,9 @@ export async function recordTaskSpecRefs(
       handoff: normalizeHandoffRecord(options.handoff ?? existingTaskRef?.handoff),
       notes: options.notes ?? existingTaskRef?.notes,
       blockedBy: dedupe([...(existingTaskRef?.blockedBy ?? []), ...(options.blockedBy ?? [])]),
+      needsResync: existingTaskRef?.needsResync ?? false,
+      resyncClauseIds: dedupe(existingTaskRef?.resyncClauseIds ?? []),
+      lastSpecVersion: existingTaskRef?.lastSpecVersion ?? state.currentVersion,
     });
 
     state.taskRefs[taskId] = taskRef;
@@ -690,6 +745,45 @@ export async function updateTaskExecutionStatus(
     ...options,
     status,
   });
+}
+
+export async function getPendingSyncState(): Promise<SpecSyncState | undefined> {
+  const release = await acquireLock(LOCK_FILE_PATH);
+  try {
+    return await readSyncStateSnapshot();
+  } finally {
+    await release();
+  }
+}
+
+export async function clearPendingSyncState(): Promise<SpecTrackerState> {
+  const release = await acquireLock(LOCK_FILE_PATH);
+  try {
+    const currentState = await readStateFile();
+    const state = currentState ?? normalizeState({ ...DEFAULT_STATE });
+    state.syncState = undefined;
+    state.taskRefs = Object.fromEntries(
+      Object.entries(state.taskRefs).map(([taskId, taskRef]) => [taskId, normalizeTaskRef({
+        ...taskRef,
+        needsResync: false,
+        resyncClauseIds: [],
+      })])
+    );
+    state.updatedAt = Date.now();
+    await writeStateFile(state);
+    return state;
+  } finally {
+    await release();
+  }
+}
+
+export async function getTasksNeedingResync(): Promise<TaskSpecRef[]> {
+  const release = await acquireLock(LOCK_FILE_PATH);
+  try {
+    return await readTasksNeedingResyncSnapshot();
+  } finally {
+    await release();
+  }
 }
 
 export async function recordBugFix(
@@ -1044,11 +1138,9 @@ export async function updateSpecVersion(
     const currentState = await readStateFile();
     const state = currentState ?? { ...DEFAULT_STATE };
 
-    // Create content hash for the new spec
     const newContent = newClauses.map((c) => `${c.clauseId}:${c.content}`).join("|");
-    const newContentHash = simpleHash(newContent);
+    const _newContentHash = simpleHash(newContent);
 
-    // Build new clause map
     const newClauseMap = new Map<string, SpecClause>();
     for (const c of newClauses) {
       newClauseMap.set(c.clauseId, {
@@ -1056,7 +1148,7 @@ export async function updateSpecVersion(
         section: c.section,
         title: c.title,
         content: c.content,
-        completed: false, // Reset completion on spec update
+        completed: false,
         status: "pending",
         evidence: [],
         coveredByTasks: [],
@@ -1064,18 +1156,15 @@ export async function updateSpecVersion(
       });
     }
 
-    // Calculate diff
     const added: SpecClause[] = [];
     const removed: string[] = [];
     const modified: Array<{ before: SpecClause; after: SpecClause }> = [];
 
-    // Find added and modified clauses
     for (const [clauseId, newClause] of newClauseMap) {
       const existing = state.clauses[clauseId];
       if (!existing) {
         added.push(newClause);
       } else if (existing.content !== newClause.content) {
-        // Preserve completion status if content didn't change meaningfully
         const mergedClause = normalizeClause({
           ...newClause,
           completed: existing.completed,
@@ -1093,19 +1182,45 @@ export async function updateSpecVersion(
         });
         newClauseMap.set(clauseId, mergedClause);
       } else {
-        // No change, preserve existing clause data
         newClauseMap.set(clauseId, { ...existing });
       }
     }
 
-    // Find removed clauses
     for (const clauseId of Object.keys(state.clauses)) {
       if (!newClauseMap.has(clauseId)) {
         removed.push(clauseId);
       }
     }
 
-    // Save the current version to history before updating
+    const changedClauseIds = dedupe([
+      ...added.map((clause) => clause.id),
+      ...removed,
+      ...modified.map(({ after }) => after.id),
+    ]);
+    const affectedTaskIds = dedupe(changedClauseIds.flatMap((clauseId) => {
+      const currentClause = state.clauses[clauseId];
+      const modifiedClause = modified.find(({ before, after }) => before.id === clauseId || after.id === clauseId);
+      return dedupe([
+        ...(currentClause?.coveredByTasks ?? []),
+        ...(modifiedClause?.before.coveredByTasks ?? []),
+        ...(modifiedClause?.after.coveredByTasks ?? []),
+      ]);
+    }));
+
+    for (const taskId of affectedTaskIds) {
+      const existingTaskRef = state.taskRefs[taskId];
+      if (!existingTaskRef) {
+        continue;
+      }
+      const impactedClauseIds = changedClauseIds.filter((clauseId) => existingTaskRef.clauseIds.includes(clauseId));
+      state.taskRefs[taskId] = normalizeTaskRef({
+        ...existingTaskRef,
+        needsResync: impactedClauseIds.length > 0,
+        resyncClauseIds: dedupe([...(existingTaskRef.resyncClauseIds ?? []), ...impactedClauseIds]),
+        lastSpecVersion: newVersion,
+      });
+    }
+
     const currentVersionEntry: SpecVersion = {
       version: state.currentVersion,
       createdAt: state.updatedAt,
@@ -1114,15 +1229,25 @@ export async function updateSpecVersion(
     };
     state.versionHistory.push(currentVersionEntry);
 
-    // Keep only last 10 versions
     if (state.versionHistory.length > 10) {
       state.versionHistory = state.versionHistory.slice(-10);
     }
 
-    // Update state with new version and clauses
+    const syncUpdatedAt = Date.now();
     state.currentVersion = newVersion;
     state.clauses = Object.fromEntries(newClauseMap);
-    state.updatedAt = Date.now();
+    state.syncState = changedClauseIds.length > 0
+      ? {
+        specVersion: newVersion,
+        affectedClauseIds: changedClauseIds,
+        affectedTaskIds,
+        needsTodoResync: true,
+        needsTaskResync: true,
+        needsRegressionReplan: true,
+        updatedAt: syncUpdatedAt,
+      }
+      : undefined;
+    state.updatedAt = syncUpdatedAt;
 
     await writeStateFile(state);
 
