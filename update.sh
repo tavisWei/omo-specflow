@@ -42,6 +42,7 @@ if [ "$UPDATE_MODE" = "global" ]; then
     cp -r "$SCRIPT_DIR/.opencode/hooks/omo-specflow" ~/.config/opencode/skills/
 
     echo "⚡ 更新命令..."
+    rm -f ~/.config/opencode/commands/spec-start.md ~/.config/opencode/commands/sf-new.md ~/.config/opencode/commands/sf-spec.md ~/.config/opencode/commands/sf-iterate.md ~/.config/opencode/commands/sf-bugfix.md
     for command_file in "${COMMAND_FILES[@]}"; do
         cp "$SCRIPT_DIR/.opencode/commands/$command_file" ~/.config/opencode/commands/
     done
@@ -72,6 +73,7 @@ else
     cp -r "$SCRIPT_DIR/.opencode/hooks/omo-specflow" .opencode/hooks/
 
     echo "⚡ 更新命令..."
+    rm -f .opencode/commands/spec-start.md .opencode/commands/sf-new.md .opencode/commands/sf-spec.md .opencode/commands/sf-iterate.md .opencode/commands/sf-bugfix.md
     for command_file in "${COMMAND_FILES[@]}"; do
         cp "$SCRIPT_DIR/.opencode/commands/$command_file" .opencode/commands/
     done
