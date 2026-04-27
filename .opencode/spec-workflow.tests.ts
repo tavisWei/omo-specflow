@@ -456,6 +456,8 @@ describe("Quality Gates (state.ts)", () => {
     expect(content).toContain("must include a page transition matrix section");
     expect(content).toContain("must include a modal inventory section");
     expect(content).toContain("must include total page and modal counts");
+    expect(content).toContain("must include a style anchors section");
+    expect(content).toContain("must include a page source markers section");
     expect(content).toContain("must include a page coverage gaps section");
     expect(content).toContain("must include page transition details");
   });
@@ -901,6 +903,8 @@ describe("Agent Instructions", () => {
   it("includes brownfield support docs", async () => {
     const brownfield = await fs.readFile(path.join(INSTRUCTION_DIR, "15-brownfield-mode.md"), "utf-8");
     expect(brownfield).toContain("Brownfield");
+    expect(brownfield).toContain("QA-First Gap Classification");
+    expect(brownfield).toContain("已实现 / 部分实现 / 偏离需求 / 未实现");
     const impact = await fs.readFile(path.join(INSTRUCTION_DIR, "16-impact-analysis.md"), "utf-8");
     expect(impact).toContain("Impact Analysis");
     const regression = await fs.readFile(path.join(INSTRUCTION_DIR, "17-regression-planning.md"), "utf-8");
@@ -1095,6 +1099,18 @@ describe("Template Quality", () => {
     expect(content).toContain("Page Transition Matrix");
     expect(content).toContain("Total Pages");
     expect(content).toContain("Total Modals");
+    expect(content).toContain("Style Anchors");
+    expect(content).toContain("Page Source Markers");
+  });
+
+  it("sf-spec and sf-iterate include the new scenario-specific guidance", async () => {
+    const specCommand = await fs.readFile(".opencode/commands/sf-spec.md", "utf-8");
+    const iterateCommand = await fs.readFile(".opencode/commands/sf-iterate.md", "utf-8");
+    expect(specCommand).toContain("不完整 PRD / 部分原型建议输入");
+    expect(specCommand).toContain("Style anchors:");
+    expect(specCommand).toContain("最小必要缺口");
+    expect(iterateCommand).toContain("日常 QA / 需求对齐建议输入");
+    expect(iterateCommand).toContain("未实现 / 部分实现 / 偏离需求");
   });
 
   it("PRODUCT-DESIGN.md includes transition details and page coverage gaps", async () => {

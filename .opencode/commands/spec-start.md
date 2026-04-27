@@ -299,20 +299,24 @@ It consumes the template system under `.opencode/spec-templates/` and the execut
 
 ### Direct-Spec（已有明确需求和原型图）
 
-> 该模式不重新做开放式 Discovery，而是把现有需求/原型快速沉淀为可执行 spec。
+> 该模式不重新做开放式 Discovery，而是把现有需求/原型快速沉淀为可执行 spec。若输入材料不完整，仅补最小必要缺口，不扩写无关范围。
 
 1. **读取现有输入** — 加载已有 PRD、原型图、页面说明、接口说明
 2. **文档吸收校验** — 检查需求、页面、接口是否足够形成 spec；缺口只补最小必要内容
-3. **跳过开放式竞品调研** — 不要求完整 COMPETITOR-RESEARCH，除非需求存在关键不确定性
-4. **Architecture / Design 对齐** — 将现有原型和需求映射到 `ARCHITECTURE.md`、`UIUX.md`、`PRODUCT-DESIGN.md`
-5. **Constitution / Specify** — 生成 `.spec/SPEC.md` 和按模板子集的核心 spec 文档
-6. **生成 TODO 桥** — 创建 `.spec/TODO.md`，把页面、接口、数据库、测试拆成 bridge todo
-7. **生成 TASKS** — 从 TODO 细化为 `.spec/TASKS.md`
-8. **进入 Orchestrator** — 执行 `Implement → Test → Complete`
+3. **缺口分类** — 将缺口标记为“需求缺口 / 页面缺口 / 接口缺口 / 风格锚点缺口”
+4. **跳过开放式竞品调研** — 不要求完整 COMPETITOR-RESEARCH，除非需求存在关键不确定性
+5. **Architecture / Design 对齐** — 将现有原型和需求映射到 `ARCHITECTURE.md`、`UIUX.md`、`PRODUCT-DESIGN.md`
+6. **缺页补全** — 对菜单、需求或场景中已声明但尚无原型承接的页面，先写入 UIUX / PRODUCT-DESIGN，再纳入 page coverage
+7. **Constitution / Specify** — 生成 `.spec/SPEC.md` 和按模板子集的核心 spec 文档
+8. **生成 TODO 桥** — 创建 `.spec/TODO.md`，把页面、接口、数据库、测试拆成 bridge todo
+9. **生成 TASKS** — 从 TODO 细化为 `.spec/TASKS.md`
+10. **进入 Orchestrator** — 执行 `Implement → Test → Complete`
 
 ### Brownfield（现有项目迭代）— 增量生成
 
 > 棕地模式下，**不重新生成整个 spec 集**。只更新受本次迭代影响的文档。
+
+> 若起点来自日常 QA，则先给出“已实现 / 部分实现 / 偏离需求 / 未实现”的差异结论，再进入增量 spec 和任务分解。
 
 1. **读取现有文档真源** — 扫描 `.spec/` 目录，加载已有上游文档、Constitution 和模板文件
 2. **差异分析** — 根据 BQ1（受影响模块）和 BQ2（范围外模块）确定需要更新的上游/下游文档集合

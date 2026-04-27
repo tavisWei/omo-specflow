@@ -292,6 +292,26 @@ Prototype: https://example.com/figma
 Constraints: Next.js + PostgreSQL, only P0 scope in this iteration
 ```
 
+#### Direct-Spec（不完整 PRD / 部分原型）
+
+```text
+/sf-spec
+PRD: https://example.com/prd
+Prototype: https://example.com/figma
+Known gaps:
+- PRD only covers core requirements
+- Prototype only covers core pages
+- Asset library is mentioned in menu but has no prototype page yet
+Style anchors:
+- dashboard
+- list page
+Missing pages:
+- asset library
+- asset detail
+Consistency requirements:
+- keep colors, spacing, table style, button hierarchy, and interaction patterns aligned with existing prototype
+```
+
 #### Brownfield Feature
 
 ```text
@@ -299,6 +319,20 @@ Constraints: Next.js + PostgreSQL, only P0 scope in this iteration
 Affected modules: billing, checkout
 Out of scope: reporting
 Regression scope: checkout, invoice generation
+```
+
+#### Brownfield Feature（日常 QA / 需求对齐）
+
+```text
+/sf-iterate 对 checkout 流程做一次需求对齐 QA
+Original requirement: https://example.com/prd#checkout
+Current implementation: checkout page + payment API + order confirmation flow
+Suspected gaps:
+- coupon stacking may not match the original rule
+- order timeout handling may be missing
+Goal:
+- determine implemented / partially implemented / deviated / missing items
+- produce gap list, delta spec, TODO, TASKS, and regression scope
 ```
 
 #### Bugfix

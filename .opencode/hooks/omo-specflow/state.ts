@@ -294,7 +294,7 @@ async function getDetectedTemplateGaps(specDir: string, workflowState?: SpecWork
     ? discoveryMetadata.interviewTrack.toLowerCase()
     : "web";
   const specDirEntries = await fs.readdir(specDir).catch(() => [] as string[]);
-  const existingFiles = new Set(specDirEntries);
+  const existingFiles: Set<string> = new Set(specDirEntries);
   const clauseText = Object.values(trackerState.clauses)
     .map((clause) => `${clause.section}\n${clause.title}\n${clause.content}`)
     .join("\n");
@@ -467,6 +467,14 @@ function hasModalInventory(content: string): boolean {
 
 function hasPageCountSummary(content: string): boolean {
   return /页面总数|Total Pages/i.test(content) && /弹窗总数|Total Modals/i.test(content);
+}
+
+function hasStyleAnchors(content: string): boolean {
+  return /风格锚点|Style Anchors/i.test(content);
+}
+
+function hasPageSourceMarkers(content: string): boolean {
+  return /页面来源标记|Page Source Markers/i.test(content);
 }
 
 function hasLogicalArchitecture(content: string): boolean {
@@ -666,6 +674,12 @@ const PHASE_COMPLETION_CHECKS: Record<WorkflowPhase, (specDir: string) => Promis
       }
       if (!hasPageCountSummary(uiuxContent)) {
         errors.push("UIUX.md must include total page and modal counts");
+      }
+      if (!hasStyleAnchors(uiuxContent)) {
+        errors.push("UIUX.md must include a style anchors section");
+      }
+      if (!hasPageSourceMarkers(uiuxContent)) {
+        errors.push("UIUX.md must include a page source markers section");
       }
     } catch {
       errors.push("UIUX.md not found at " + uiuxPath);
